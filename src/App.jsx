@@ -12,10 +12,10 @@ const BLOCK_TYPES = [
 ];
 
 const MEETING_TYPES = [
-  { id: 'team', name: 'Team Meeting', frequency: 'Weekly', color: '#14b8a6' },
-  { id: 'senior', name: 'Senior Don 1:1', frequency: 'Monthly', color: '#8b5cf6' },
-  { id: 'rlc', name: 'RLC Meeting', frequency: 'Bi-weekly', color: '#f59e0b' },
-  { id: 'community', name: 'Community Meeting', frequency: 'As scheduled', color: '#ec4899' },
+  { id: 'team', name: 'Team Meeting', frequency: 'Weekly', duration: '1 hour', color: '#14b8a6' },
+  { id: 'senior', name: 'Senior Don 1:1', frequency: 'Monthly', duration: '30 min', color: '#8b5cf6' },
+  { id: 'rlc', name: 'RLC Meeting', frequency: 'Bi-weekly', duration: '30 min', color: '#f59e0b' },
+  { id: 'community', name: 'Community Meeting', frequency: 'As scheduled', duration: '30 min', color: '#ec4899' },
 ];
 
 export default function DonScheduler() {
@@ -160,13 +160,19 @@ export default function DonScheduler() {
       }
     });
 
+    // Add meetings - Team is 1 hour, others are 30 min (still takes 1 slot in grid)
     Object.entries(meetings).forEach(([type, meetingList]) => {
       meetingList.forEach(meeting => {
         const hour = parseInt(meeting.time.split(':')[0]);
         const slot = schedule[meeting.day]?.find(d => d.hour === hour);
         const meetingInfo = MEETING_TYPES.find(m => m.id === type);
         if (slot && !slot.block) {
-          slot.block = { type: 'meeting', name: meetingInfo?.name.split(' ')[0] || 'Meeting', locked: true };
+          slot.block = { 
+            type: 'meeting', 
+            name: type === 'team' ? 'Team' : type === 'senior' ? 'SD 1:1' : type === 'rlc' ? 'RLC' : 'Comm',
+            locked: true,
+            duration: meetingInfo?.duration
+          };
         }
       });
     });
@@ -343,6 +349,7 @@ export default function DonScheduler() {
         .meeting-type-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .meeting-type-name { font-weight: 700; font-size: 16px; }
         .meeting-type-freq { font-size: 12px; opacity: 0.7; }
+        .meeting-type-duration { font-size: 11px; background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
       `}</style>
 
       <input type="file" ref={classInputRef} className="hidden-input" accept="image/*" onChange={handleClassFileSelect} />
@@ -372,7 +379,6 @@ export default function DonScheduler() {
           
           {classImages.length > 0 && <div className="image-preview">{classImages.map((img, idx) => <img key={idx} src={img.data} alt="Schedule" onClick={() => setShowImageModal(img.data)} />)}</div>}
           
-          {/* Add Class Form */}
           <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 20, marginTop: 20 }}>
             <div style={{ fontWeight: 600, marginBottom: 15 }}>Add Class</div>
             <div className="form-row">
@@ -490,7 +496,7 @@ export default function DonScheduler() {
           <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 25 }}>
             <div className="form-row" style={{ marginBottom: 0 }}>
               <select className="input-field" value={newMeeting.type} onChange={e => setNewMeeting({ ...newMeeting, type: e.target.value })} style={{ flex: 1 }}>
-                {MEETING_TYPES.map(m => <option key={m.id} value={m.id}>{m.name} ({m.frequency})</option>)}
+                {MEETING_TYPES.map(m => <option key={m.id} value={m.id}>{m.name} ({m.frequency}) - {m.duration}</option>)}
               </select>
               <select className="input-field" value={newMeeting.day} onChange={e => setNewMeeting({ ...newMeeting, day: e.target.value })} style={{ width: 'auto' }}>
                 {DAYS.map(d => <option key={d}>{d}</option>)}
@@ -505,6 +511,7 @@ export default function DonScheduler() {
               <div className="meeting-type-header">
                 <div>
                   <span className="meeting-type-name">{meetingType.name}</span>
+                  <span className="meeting-type-duration">{meetingType.duration}</span>
                   <span className="meeting-type-freq" style={{ marginLeft: 10 }}>{meetingType.frequency}</span>
                 </div>
                 <span style={{ fontSize: 14, opacity: 0.7 }}>{meetings[meetingType.id].length} scheduled</span>
@@ -625,7 +632,6 @@ export default function DonScheduler() {
         </div>
       )}
 
-      {/* Add Block Modal */}
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -641,7 +647,6 @@ export default function DonScheduler() {
         </div>
       )}
 
-      {/* Image Modal */}
       {showImageModal && typeof showImageModal === 'string' && (
         <div className="modal-overlay" onClick={() => setShowImageModal(null)}>
           <img src={showImageModal} alt="Full" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12 }} />
