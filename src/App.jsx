@@ -12,10 +12,10 @@ const BLOCK_TYPES = [
 ];
 
 const MEETING_TYPES = [
-  { id: 'team', name: 'Team Meeting', frequency: 'Weekly', duration: '1 hour', color: '#14b8a6' },
-  { id: 'senior', name: 'Senior Don 1:1', frequency: 'Monthly', duration: '30 min', color: '#8b5cf6' },
-  { id: 'rlc', name: 'RLC Meeting', frequency: 'Bi-weekly', duration: '30 min', color: '#f59e0b' },
-  { id: 'community', name: 'Community Meeting', frequency: 'As scheduled', duration: '30 min', color: '#ec4899' },
+  { id: 'team', name: 'Team Meeting', frequency: 'Weekly', duration: '1 hour', color: '#86c5b8' },
+  { id: 'senior', name: 'Senior Don 1:1', frequency: 'Monthly', duration: '30 min', color: '#b8a9c9' },
+  { id: 'rlc', name: 'RLC Meeting', frequency: 'Bi-weekly', duration: '30 min', color: '#e8c4a0' },
+  { id: 'community', name: 'Community Meeting', frequency: 'As scheduled', duration: '30 min', color: '#d4a5a5' },
 ];
 
 export default function DonScheduler() {
@@ -31,7 +31,6 @@ export default function DonScheduler() {
   const [meetings, setMeetings] = useState({ team: [], senior: [], rlc: [], community: [] });
   const [newMeeting, setNewMeeting] = useState({ type: 'team', day: 'Monday', time: '19:00' });
   
-  // Community Connections
   const [communitySize, setCommunitySize] = useState('');
   const [connectionStartDate, setConnectionStartDate] = useState('');
   const [connectionDueDate, setConnectionDueDate] = useState('');
@@ -135,7 +134,6 @@ export default function DonScheduler() {
     const totalWeeks = Math.max(1, totalDays / 7);
     const perDay = Math.ceil(size / totalDays);
     const perWeek = Math.ceil(size / totalWeeks);
-    // Per DOD shift (assuming they have DOD shifts)
     const dodShiftCount = dodShifts.length || 1;
     const totalDODShifts = Math.ceil(totalWeeks) * dodShiftCount;
     const perDODShift = Math.ceil(size / Math.max(1, totalDODShifts));
@@ -147,7 +145,6 @@ export default function DonScheduler() {
     const schedule = {};
     DAYS.forEach(day => { schedule[day] = HOURS.map(hour => ({ hour, block: null })); });
 
-    // 1. Add classes (locked)
     classes.forEach(cls => {
       const daySchedule = schedule[cls.day];
       if (daySchedule) {
@@ -158,7 +155,6 @@ export default function DonScheduler() {
       }
     });
 
-    // 2. Add DOD shifts (locked) - 8-10 PM
     dodShifts.forEach(day => {
       for (let h = 20; h <= 22; h++) {
         const slot = schedule[day]?.find(d => d.hour === h);
@@ -166,7 +162,6 @@ export default function DonScheduler() {
       }
     });
 
-    // 3. Add Connection blocks before DOD shifts (7-8 PM on DOD days)
     const connectionStats = calculateConnections();
     if (connectionStats.perDODShift > 0) {
       dodShifts.forEach(day => {
@@ -177,7 +172,6 @@ export default function DonScheduler() {
       });
     }
 
-    // 4. Add Friday hangouts (locked)
     fridayHangouts.forEach(fnh => {
       const startH = parseInt(fnh.startTime.split(':')[0]);
       const endH = parseInt(fnh.endTime.split(':')[0]);
@@ -187,7 +181,6 @@ export default function DonScheduler() {
       }
     });
 
-    // 5. Add meetings (locked)
     Object.entries(meetings).forEach(([type, meetingList]) => {
       meetingList.forEach(meeting => {
         const hour = parseInt(meeting.time.split(':')[0]);
@@ -202,7 +195,6 @@ export default function DonScheduler() {
       });
     });
 
-    // 6. Add meals (unlocked)
     [{ name: 'Breakfast', start: 8, end: 9 }, { name: 'Lunch', start: 12, end: 13 }, { name: 'Dinner', start: 18, end: 19 }].forEach(meal => {
       DAYS.forEach(day => {
         for (let h = meal.start; h < meal.end; h++) {
@@ -212,7 +204,6 @@ export default function DonScheduler() {
       });
     });
 
-    // Count current class hours
     let classHours = 0;
     DAYS.forEach(day => {
       schedule[day].forEach(slot => {
@@ -220,10 +211,9 @@ export default function DonScheduler() {
       });
     });
 
-    // 7. Add study time to reach ~20h combined with classes
     const targetStudyHours = Math.max(0, 20 - classHours);
     let studyAdded = 0;
-    const studyTimes = [9, 10, 11, 14, 15, 16]; // Preferred study times
+    const studyTimes = [9, 10, 11, 14, 15, 16];
     
     for (const day of DAYS) {
       if (studyAdded >= targetStudyHours) break;
@@ -237,9 +227,8 @@ export default function DonScheduler() {
       }
     }
 
-    // 8. Add personal time (~5h target)
     let personalAdded = 0;
-    const personalTimes = [17, 21, 22]; // Evening personal time
+    const personalTimes = [17, 21, 22];
     
     for (const day of DAYS) {
       if (personalAdded >= 5) break;
@@ -253,7 +242,6 @@ export default function DonScheduler() {
       }
     }
 
-    // 9. Fill remaining evening slots with social time (~5h target)
     let socialAdded = 0;
     for (const day of DAYS) {
       if (socialAdded >= 5) break;
@@ -323,16 +311,17 @@ export default function DonScheduler() {
   const connectionStats = calculateConnections();
   const totalFNHHours = fridayHangouts.reduce((sum, f) => sum + (f.hours || 0), 0);
 
+  // Pastel color scheme
   const getBlockStyle = (type) => ({
-    class: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' },
-    dod: { background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: 'white' },
-    hangout: { background: 'linear-gradient(135deg, #ec4899 0%, #be185d 100%)', color: 'white' },
-    meeting: { background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color: 'white' },
-    connection: { background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', color: 'white' },
-    meal: { background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', color: 'white' },
-    personal: { background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: '#1a1a2e' },
-    study: { background: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', color: '#1a1a2e' },
-    social: { background: 'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)', color: '#1a1a2e' }
+    class: { background: '#a8c5e2', color: '#2c3e50' },      // Soft blue
+    dod: { background: '#f5d5a0', color: '#5d4e37' },        // Soft gold/amber
+    hangout: { background: '#e8b4c8', color: '#4a3540' },    // Soft pink
+    meeting: { background: '#9dd5c8', color: '#2d4a44' },    // Soft teal
+    connection: { background: '#c5b3d9', color: '#3d3250' }, // Soft purple
+    meal: { background: '#f0b8b8', color: '#4a3535' },       // Soft coral
+    personal: { background: '#b8d4e8', color: '#2d4050' },   // Light sky blue
+    study: { background: '#f5e6a3', color: '#4a4530' },      // Soft yellow
+    social: { background: '#c8e6c9', color: '#2d4a2d' }      // Soft green
   }[type] || {});
 
   const formatHour = (h) => h === 12 ? '12 PM' : h > 12 ? `${h - 12} PM` : `${h} AM`;
@@ -357,11 +346,11 @@ export default function DonScheduler() {
         .input-field:focus { outline: none; border-color: #667eea; }
         select.input-field option { background: #302b63; color: white; }
         .tag { display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 30px; margin: 5px; font-size: 14px; font-weight: 600; }
-        .tag button { background: rgba(255,255,255,0.2); border: none; width: 22px; height: 22px; border-radius: 50%; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .tag.class { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        .tag.dod { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
-        .tag.meeting { background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%); }
-        .tag.fnh { background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); }
+        .tag button { background: rgba(255,255,255,0.3); border: none; width: 22px; height: 22px; border-radius: 50%; color: inherit; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .tag.class { background: #a8c5e2; color: #2c3e50; }
+        .tag.dod { background: #f5d5a0; color: #5d4e37; }
+        .tag.meeting { background: #9dd5c8; color: #2d4a44; }
+        .tag.fnh { background: #e8b4c8; color: #4a3540; }
         .upload-zone { border: 2px dashed rgba(255,255,255,0.3); border-radius: 16px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s; }
         .upload-zone:hover, .upload-zone.dragging { border-color: #667eea; background: rgba(102,126,234,0.15); }
         .stat-card { background: linear-gradient(135deg, rgba(102,126,234,0.2), rgba(118,75,162,0.2)); border-radius: 16px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
@@ -408,8 +397,8 @@ export default function DonScheduler() {
         .meeting-type-name { font-weight: 700; font-size: 16px; }
         .meeting-type-freq { font-size: 12px; opacity: 0.7; }
         .meeting-type-duration { font-size: 11px; background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
-        .highlight-box { background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(109,40,217,0.2)); border: 1px solid rgba(139,92,246,0.4); border-radius: 16px; padding: 20px; margin-top: 20px; }
-        .highlight-box h3 { color: #a78bfa; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .highlight-box { background: linear-gradient(135deg, rgba(197,179,217,0.2), rgba(168,197,226,0.2)); border: 1px solid rgba(197,179,217,0.4); border-radius: 16px; padding: 20px; margin-top: 20px; }
+        .highlight-box h3 { color: #c5b3d9; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
       `}</style>
 
       <input type="file" ref={classInputRef} className="hidden-input" accept="image/*" onChange={handleClassFileSelect} />
@@ -642,7 +631,7 @@ export default function DonScheduler() {
                   <h3><Users size={20} /> Connections During DOD</h3>
                   <p style={{ margin: 0, fontSize: 14 }}>
                     With <strong>{dodShifts.length} DOD shift{dodShifts.length > 1 ? 's' : ''}</strong> per week, 
-                    aim for <strong style={{ color: '#a78bfa', fontSize: 18 }}>{connectionStats.perDODShift} connections</strong> per shift.
+                    aim for <strong style={{ color: '#c5b3d9', fontSize: 18 }}>{connectionStats.perDODShift} connections</strong> per shift.
                   </p>
                   <p style={{ margin: '10px 0 0', fontSize: 13, opacity: 0.7 }}>
                     Connection blocks will be added to your schedule at 7 PM before each DOD shift.
@@ -718,9 +707,9 @@ export default function DonScheduler() {
           </div>
 
           <div style={{ marginTop: 20, padding: 15, background: 'rgba(255,255,255,0.05)', borderRadius: 12, display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'center' }}>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#667eea' }}>{(categoryHours.class || 0) + (categoryHours.study || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Class + Study</div></div>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#f59e0b' }}>{(categoryHours.dod || 0) + (categoryHours.hangout || 0) + (categoryHours.meeting || 0) + (categoryHours.connection || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Don Duties</div></div>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#4facfe' }}>{(categoryHours.personal || 0) + (categoryHours.social || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Personal + Social</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#a8c5e2' }}>{(categoryHours.class || 0) + (categoryHours.study || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Class + Study</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#f5d5a0' }}>{(categoryHours.dod || 0) + (categoryHours.hangout || 0) + (categoryHours.meeting || 0) + (categoryHours.connection || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Don Duties</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#c8e6c9' }}>{(categoryHours.personal || 0) + (categoryHours.social || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Personal + Social</div></div>
           </div>
 
           <div className="nav-buttons">
