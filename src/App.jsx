@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Loader, Sparkles, AlertCircle, Trash2 } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -37,11 +37,20 @@ export default function DonScheduler() {
   const [showImageModal, setShowImageModal] = useState(null);
   const [editMode, setEditMode] = useState('drag');
   const [showAddModal, setShowAddModal] = useState(null);
+  const [isDraggingClass, setIsDraggingClass] = useState(false);
+  const [isDraggingRLM, setIsDraggingRLM] = useState(false);
+
+  const classInputRef = useRef(null);
+  const rlmInputRef = useRef(null);
 
   const parseClassScheduleWithAI = async (imageData) => {
     setParsingClasses(true);
     setClassParseError(null);
     try {
+      const mediaType = imageData.includes('data:image/png') ? 'image/png' : 
+                        imageData.includes('data:image/jpeg') ? 'image/jpeg' : 
+                        imageData.includes('data:image/jpg') ? 'image/jpeg' : 'image/png';
+      
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -51,49 +60,53 @@ export default function DonScheduler() {
           messages: [{
             role: "user",
             content: [
-              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageData.split(',')[1] } },
-              { type: "text", text: `Analyze this class schedule image carefully. This is likely a university timetable grid with:
+              { type: "image", source: { type: "base64", media_type: mediaType, data: imageData.split(',')[1] } },
+              { type: "text", text: `Analyze this class schedule image carefully. This is a university timetable grid with:
 - Days of the week as columns (Monday, Tuesday, Wednesday, Thursday, Friday)
-- Hours/times as rows
-- Class blocks containing course codes, times, and locations
+- Hours/times as rows (8:00, 9:00, 10:00, etc.)
+- Class blocks containing course codes, times, and room locations
 
 For each class block you find, extract:
-1. Course name/code (e.g., "SOCI-2110H", "HIST-3320H", "CAST-3740H") - use the short version without section codes like "-A-F01"
-2. The day of the week it's on (Monday, Tuesday, Wednesday, Thursday, Friday)
+1. Course name/code (e.g., "SOCI-2110H", "HIST-3320H", "CAST-3740H")
+2. The day of the week it appears in (Monday, Tuesday, Wednesday, Thursday, Friday)
 3. Start time in 24-hour format (e.g., "09:00", "13:00", "17:00")
-4. End time in 24-hour format (e.g., "11:50", "15:50", "18:50")
+4. End time in 24-hour format - round up to next hour (11:50 becomes "12:00", 15:50 becomes "16:00")
 
-IMPORTANT: 
-- If a class appears in the same time slot on multiple days, create SEPARATE entries for EACH day
-- Look for time ranges like "09:00-11:50" within the cell text
-- Course codes often look like "SUBJ-####H" format
-- Round end times up to the next hour for scheduling (11:50 → 12:00, 15:50 → 16:00, 18:50 → 19:00, 21:50 → 22:00)
+IMPORTANT RULES:
+- Create a SEPARATE entry for EACH day a class appears
+- Look at which COLUMN the class is in to determine the day
+- Look at which ROW the class starts in to determine start time
+- Course codes look like "XXXX-####H" format (4 letters, dash, 4 numbers, H)
+- The colored/shaded cells indicate class times
 
-Return ONLY a valid JSON array with no other text:
+Return ONLY a valid JSON array, nothing else:
 [
   {"name": "SOCI-2110H", "day": "Tuesday", "startTime": "09:00", "endTime": "12:00"},
-  {"name": "SOCI-2110H", "day": "Monday", "startTime": "09:00", "endTime": "12:00"},
-  {"name": "HIST-3320H", "day": "Tuesday", "startTime": "13:00", "endTime": "16:00"}
+  {"name": "SOCI-2110H", "day": "Monday", "startTime": "09:00", "endTime": "12:00"}
 ]
 
-If you cannot read the schedule clearly, return an empty array: []` }
+If you cannot read clearly, return: []` }
             ]
           }]
         })
       });
       const data = await response.json();
+      console.log('API Response:', data);
       const text = data.content?.map(item => item.text || "").join("") || "";
+      console.log('Response text:', text);
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
+        console.log('Parsed classes:', parsed);
         const classesWithIds = parsed.map((cls, idx) => ({
           ...cls, 
           id: Date.now() + idx,
           startTime: String(parseInt(cls.startTime?.split(':')[0]) || 9),
           endTime: String(parseInt(cls.endTime?.split(':')[0]) || 10)
         }));
-        setClasses(prev => [...prev, ...classesWithIds]);
-        if (classesWithIds.length === 0) {
+        if (classesWithIds.length > 0) {
+          setClasses(prev => [...prev, ...classesWithIds]);
+        } else {
           setClassParseError('No classes detected. Try adding manually.');
         }
       } else {
@@ -111,6 +124,7 @@ If you cannot read the schedule clearly, return an empty array: []` }
     setParsingRLM(true);
     setRlmParseError(null);
     try {
+      const mediaType = imageData.includes('data:image/png') ? 'image/png' : 'image/jpeg';
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,7 +134,7 @@ If you cannot read the schedule clearly, return an empty array: []` }
           messages: [{
             role: "user",
             content: [
-              { type: "image", source: { type: "base64", media_type: "image/png", data: imageData.split(',')[1] } },
+              { type: "image", source: { type: "base64", media_type: mediaType, data: imageData.split(',')[1] } },
               { type: "text", text: `Analyze this RLM/residence life calendar and extract all tasks, events, and deadlines.
 
 Look for:
@@ -139,8 +153,7 @@ For each item found, extract:
 Return ONLY a valid JSON array ordered by date:
 [
   {"name": "Move In Day", "startDate": "2025-08-31", "endDate": "2025-08-31", "type": "event"},
-  {"name": "Community Connection Conversations #1 Due", "startDate": "2025-08-31", "endDate": "2025-09-08", "type": "deadline"},
-  {"name": "Friday Night Hangout", "startDate": "2025-09-12", "endDate": "2025-09-12", "type": "hangout"}
+  {"name": "Community Connection Conversations #1 Due", "startDate": "2025-08-31", "endDate": "2025-09-08", "type": "deadline"}
 ]
 
 If unclear, return: []` }
@@ -164,30 +177,86 @@ If unclear, return: []` }
     }
   };
 
-  const handleClassImageUpload = async (e) => {
-    const files = Array.from(e.target.files || e.dataTransfer?.files || []);
+  const processFile = async (file, type) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const imageData = e.target.result;
+      if (type === 'class') {
+        setClassImages(prev => [...prev, { data: imageData, name: file.name }]);
+        await parseClassScheduleWithAI(imageData);
+      } else if (type === 'rlm') {
+        setRlmImage(imageData);
+        await parseRLMWithAI(imageData);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleClassFileSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      await processFile(file, 'class');
+    }
+    if (classInputRef.current) classInputRef.current.value = '';
+  };
+
+  const handleRLMFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await processFile(file, 'rlm');
+    }
+    if (rlmInputRef.current) rlmInputRef.current.value = '';
+  };
+
+  // Drag handlers for class upload
+  const handleClassDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingClass(true);
+  };
+
+  const handleClassDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingClass(false);
+  };
+
+  const handleClassDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingClass(false);
+    
+    const files = Array.from(e.dataTransfer.files);
     for (const file of files) {
       if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          const imageData = e.target.result;
-          setClassImages(prev => [...prev, { data: imageData, name: file.name }]);
-          await parseClassScheduleWithAI(imageData);
-        };
-        reader.readAsDataURL(file);
+        await processFile(file, 'class');
       }
     }
   };
 
-  const handleRLMUpload = async (e) => {
-    const file = e.target.files?.[0] || e.dataTransfer?.files?.[0];
-    if (file?.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        setRlmImage(e.target.result);
-        await parseRLMWithAI(e.target.result);
-      };
-      reader.readAsDataURL(file);
+  // Drag handlers for RLM upload
+  const handleRLMDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingRLM(true);
+  };
+
+  const handleRLMDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingRLM(false);
+  };
+
+  const handleRLMDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingRLM(false);
+    
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      await processFile(file, 'rlm');
     }
   };
 
@@ -387,7 +456,7 @@ If unclear, return: []` }
         .tag.meeting { background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%); }
         .tag.fnh { background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); }
         .upload-zone { border: 2px dashed rgba(255,255,255,0.3); border-radius: 16px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s; }
-        .upload-zone:hover { border-color: #667eea; background: rgba(102,126,234,0.1); }
+        .upload-zone:hover, .upload-zone.dragging { border-color: #667eea; background: rgba(102,126,234,0.15); }
         .stat-card { background: linear-gradient(135deg, rgba(102,126,234,0.2), rgba(118,75,162,0.2)); border-radius: 16px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
         .stat-number { font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #667eea, #f093fb); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .stat-label { font-size: 12px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; margin-top: 5px; }
@@ -406,7 +475,6 @@ If unclear, return: []` }
         .legend-hours { opacity: 0.7; font-size: 10px; }
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
         .modal-content { background: rgba(48,43,99,0.95); border-radius: 20px; padding: 30px; max-width: 400px; width: 100%; }
-        .modal-content img { max-width: 90vw; max-height: 85vh; border-radius: 12px; }
         .parsing-indicator { display: flex; align-items: center; gap: 12px; padding: 16px 20px; background: rgba(102,126,234,0.2); border: 1px solid rgba(102,126,234,0.4); border-radius: 12px; margin-bottom: 20px; }
         .spinner { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -433,7 +501,24 @@ If unclear, return: []` }
         .add-block-btn:hover { transform: scale(1.03); }
         .image-preview { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
         .image-preview img { width: 80px; height: 60px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
+        .hidden-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
       `}</style>
+
+      {/* Hidden file inputs */}
+      <input 
+        type="file" 
+        ref={classInputRef} 
+        className="hidden-input" 
+        accept="image/*" 
+        onChange={handleClassFileSelect} 
+      />
+      <input 
+        type="file" 
+        ref={rlmInputRef} 
+        className="hidden-input" 
+        accept="image/*" 
+        onChange={handleRLMFileSelect} 
+      />
 
       <h1>Don Schedule Manager</h1>
       <p className="subtitle">Balance classes, don duties & personal time</p>
@@ -453,12 +538,20 @@ If unclear, return: []` }
           {parsingClasses && <div className="parsing-indicator"><Loader size={20} className="spinner" /><span><strong>Analyzing schedule...</strong> This may take a few seconds</span></div>}
           {classParseError && <div className="error-box"><AlertCircle size={18} />{classParseError}</div>}
           {classes.length > 0 && !parsingClasses && <div className="success-box"><Sparkles size={18} /><strong>{classes.length} class blocks detected!</strong> Review below and edit if needed.</div>}
-          <label className="upload-zone" style={{ display: 'block', marginBottom: 20 }}>
+          
+          <div 
+            className={`upload-zone ${isDraggingClass ? 'dragging' : ''}`}
+            onClick={() => classInputRef.current?.click()}
+            onDragOver={handleClassDragOver}
+            onDragEnter={handleClassDragOver}
+            onDragLeave={handleClassDragLeave}
+            onDrop={handleClassDrop}
+            style={{ marginBottom: 20 }}
+          >
             <Image size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
             <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
             <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>Supports timetable grids, screenshots, etc.</div>
-            <input type="file" accept="image/*" onChange={handleClassImageUpload} style={{ display: 'none' }} />
-          </label>
+          </div>
           
           {classImages.length > 0 && (
             <div className="image-preview">
@@ -472,6 +565,7 @@ If unclear, return: []` }
             {!isAddingClass && <button className="btn-secondary" onClick={() => setIsAddingClass(true)}><Plus size={18} /> Add Manually</button>}
             {classes.length > 0 && <button className="btn-secondary" onClick={() => setClasses([])}><Trash2 size={18} /> Clear All</button>}
           </div>
+          
           {isAddingClass && (
             <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 20 }}>
               <div className="form-row">
@@ -493,6 +587,7 @@ If unclear, return: []` }
               </div>
             </div>
           )}
+          
           {classes.length > 0 && (
             <div style={{ marginTop: 15 }}>
               <div style={{ fontWeight: 600, marginBottom: 10 }}>Detected Classes:</div>
@@ -518,14 +613,27 @@ If unclear, return: []` }
           {rlmParseError && <div className="error-box"><AlertCircle size={18} />{rlmParseError}</div>}
           {rlmTasks.length > 0 && !parsingRLM && <div className="success-box"><Sparkles size={18} /><strong>{rlmTasks.length} tasks detected!</strong></div>}
           {!rlmImage ? (
-            <label className="upload-zone" style={{ display: 'block', marginBottom: 20 }}>
+            <div 
+              className={`upload-zone ${isDraggingRLM ? 'dragging' : ''}`}
+              onClick={() => rlmInputRef.current?.click()}
+              onDragOver={handleRLMDragOver}
+              onDragEnter={handleRLMDragOver}
+              onDragLeave={handleRLMDragLeave}
+              onDrop={handleRLMDrop}
+              style={{ marginBottom: 20 }}
+            >
               <Calendar size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
-              <div style={{ fontSize: 16, fontWeight: 600 }}>Upload RLM Calendar</div>
-              <input type="file" accept="image/*" onChange={handleRLMUpload} style={{ display: 'none' }} />
-            </label>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
+              <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>Your Term at a Glance calendar</div>
+            </div>
           ) : (
             <div style={{ marginBottom: 20 }}>
               <img src={rlmImage} alt="RLM" style={{ maxWidth: '100%', maxHeight: 250, borderRadius: 12, cursor: 'pointer', display: 'block', margin: '0 auto 15px' }} onClick={() => setShowImageModal(rlmImage)} />
+              <div style={{ textAlign: 'center', marginBottom: 15 }}>
+                <button className="btn-secondary" onClick={() => { setRlmImage(null); setRlmTasks([]); }}>
+                  <Trash2 size={16} /> Remove & Upload New
+                </button>
+              </div>
               {rlmTasks.length > 0 && (
                 <div>
                   <h3 style={{ fontSize: 16, marginBottom: 12 }}><Sparkles size={18} /> Extracted Deadlines</h3>
