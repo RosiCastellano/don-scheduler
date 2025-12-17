@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Trash2 } from 'lucide-react';
+import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Trash2, MessageCircle } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const HOURS = Array.from({ length: 17 }, (_, i) => i + 7);
@@ -30,9 +30,12 @@ export default function DonScheduler() {
   const [newFNH, setNewFNH] = useState({ date: '', startTime: '19:00', endTime: '21:00' });
   const [meetings, setMeetings] = useState({ team: [], senior: [], rlc: [], community: [] });
   const [newMeeting, setNewMeeting] = useState({ type: 'team', day: 'Monday', time: '19:00' });
+  
+  // Community Connections
   const [communitySize, setCommunitySize] = useState('');
-  const [connectionDeadline, setConnectionDeadline] = useState('');
-  const [completedConnections, setCompletedConnections] = useState('');
+  const [connectionStartDate, setConnectionStartDate] = useState('');
+  const [connectionDueDate, setConnectionDueDate] = useState('');
+  
   const [generatedSchedule, setGeneratedSchedule] = useState(null);
   const [draggedBlock, setDraggedBlock] = useState(null);
   const [showImageModal, setShowImageModal] = useState(null);
@@ -123,17 +126,28 @@ export default function DonScheduler() {
 
   const calculateConnections = () => {
     const size = parseInt(communitySize) || 0;
-    const completed = parseInt(completedConnections) || 0;
-    const remaining = Math.max(0, size - completed);
-    if (!connectionDeadline) return { remaining, weeksLeft: 0, perWeek: 0, perDay: 0 };
-    const weeksLeft = Math.max(0.5, (new Date(connectionDeadline) - new Date()) / (7 * 24 * 60 * 60 * 1000));
-    return { remaining, weeksLeft: weeksLeft.toFixed(1), perWeek: Math.ceil(remaining / weeksLeft), perDay: Math.ceil(remaining / (weeksLeft * 7)) };
+    if (!connectionStartDate || !connectionDueDate || size === 0) {
+      return { total: size, totalDays: 0, perDay: 0, perWeek: 0, perDODShift: 0 };
+    }
+    const start = new Date(connectionStartDate);
+    const due = new Date(connectionDueDate);
+    const totalDays = Math.max(1, Math.ceil((due - start) / (24 * 60 * 60 * 1000)));
+    const totalWeeks = Math.max(1, totalDays / 7);
+    const perDay = Math.ceil(size / totalDays);
+    const perWeek = Math.ceil(size / totalWeeks);
+    // Per DOD shift (assuming they have DOD shifts)
+    const dodShiftCount = dodShifts.length || 1;
+    const totalDODShifts = Math.ceil(totalWeeks) * dodShiftCount;
+    const perDODShift = Math.ceil(size / Math.max(1, totalDODShifts));
+    
+    return { total: size, totalDays, perDay, perWeek, perDODShift };
   };
 
   const generateSchedule = () => {
     const schedule = {};
     DAYS.forEach(day => { schedule[day] = HOURS.map(hour => ({ hour, block: null })); });
 
+    // 1. Add classes (locked)
     classes.forEach(cls => {
       const daySchedule = schedule[cls.day];
       if (daySchedule) {
@@ -144,6 +158,7 @@ export default function DonScheduler() {
       }
     });
 
+    // 2. Add DOD shifts (locked) - 8-10 PM
     dodShifts.forEach(day => {
       for (let h = 20; h <= 22; h++) {
         const slot = schedule[day]?.find(d => d.hour === h);
@@ -151,6 +166,18 @@ export default function DonScheduler() {
       }
     });
 
+    // 3. Add Connection blocks before DOD shifts (7-8 PM on DOD days)
+    const connectionStats = calculateConnections();
+    if (connectionStats.perDODShift > 0) {
+      dodShifts.forEach(day => {
+        const slot = schedule[day]?.find(d => d.hour === 19);
+        if (slot && !slot.block) {
+          slot.block = { type: 'connection', name: `${connectionStats.perDODShift} Connects`, locked: true };
+        }
+      });
+    }
+
+    // 4. Add Friday hangouts (locked)
     fridayHangouts.forEach(fnh => {
       const startH = parseInt(fnh.startTime.split(':')[0]);
       const endH = parseInt(fnh.endTime.split(':')[0]);
@@ -160,23 +187,22 @@ export default function DonScheduler() {
       }
     });
 
-    // Add meetings - Team is 1 hour, others are 30 min (still takes 1 slot in grid)
+    // 5. Add meetings (locked)
     Object.entries(meetings).forEach(([type, meetingList]) => {
       meetingList.forEach(meeting => {
         const hour = parseInt(meeting.time.split(':')[0]);
         const slot = schedule[meeting.day]?.find(d => d.hour === hour);
-        const meetingInfo = MEETING_TYPES.find(m => m.id === type);
         if (slot && !slot.block) {
           slot.block = { 
             type: 'meeting', 
             name: type === 'team' ? 'Team' : type === 'senior' ? 'SD 1:1' : type === 'rlc' ? 'RLC' : 'Comm',
-            locked: true,
-            duration: meetingInfo?.duration
+            locked: true
           };
         }
       });
     });
 
+    // 6. Add meals (unlocked)
     [{ name: 'Breakfast', start: 8, end: 9 }, { name: 'Lunch', start: 12, end: 13 }, { name: 'Dinner', start: 18, end: 19 }].forEach(meal => {
       DAYS.forEach(day => {
         for (let h = meal.start; h < meal.end; h++) {
@@ -186,29 +212,60 @@ export default function DonScheduler() {
       });
     });
 
+    // Count current class hours
+    let classHours = 0;
     DAYS.forEach(day => {
-      let added = 0;
-      for (let h = 14; h <= 22 && added < 3; h++) {
-        const slot = schedule[day].find(d => d.hour === h);
-        if (slot && !slot.block) { slot.block = { type: 'personal', name: 'Personal', locked: false }; added++; }
-      }
+      schedule[day].forEach(slot => {
+        if (slot.block?.type === 'class') classHours++;
+      });
     });
 
-    const studyPerDay = { Monday: 2, Tuesday: 2, Wednesday: 1, Thursday: 2, Friday: 1, Saturday: 1, Sunday: 1 };
-    DAYS.forEach(day => {
-      let added = 0;
-      for (let h = 9; h <= 21 && added < studyPerDay[day]; h++) {
+    // 7. Add study time to reach ~20h combined with classes
+    const targetStudyHours = Math.max(0, 20 - classHours);
+    let studyAdded = 0;
+    const studyTimes = [9, 10, 11, 14, 15, 16]; // Preferred study times
+    
+    for (const day of DAYS) {
+      if (studyAdded >= targetStudyHours) break;
+      for (const h of studyTimes) {
+        if (studyAdded >= targetStudyHours) break;
         const slot = schedule[day].find(d => d.hour === h);
-        if (slot && !slot.block) { slot.block = { type: 'study', name: 'Study', locked: false }; added++; }
+        if (slot && !slot.block) {
+          slot.block = { type: 'study', name: 'Study', locked: false };
+          studyAdded++;
+        }
       }
-    });
+    }
 
-    DAYS.forEach(day => {
-      for (let h = 14; h <= 22; h++) {
+    // 8. Add personal time (~5h target)
+    let personalAdded = 0;
+    const personalTimes = [17, 21, 22]; // Evening personal time
+    
+    for (const day of DAYS) {
+      if (personalAdded >= 5) break;
+      for (const h of personalTimes) {
+        if (personalAdded >= 5) break;
         const slot = schedule[day].find(d => d.hour === h);
-        if (slot && !slot.block) slot.block = { type: 'social', name: 'Social', locked: false };
+        if (slot && !slot.block) {
+          slot.block = { type: 'personal', name: 'Personal', locked: false };
+          personalAdded++;
+        }
       }
-    });
+    }
+
+    // 9. Fill remaining evening slots with social time (~5h target)
+    let socialAdded = 0;
+    for (const day of DAYS) {
+      if (socialAdded >= 5) break;
+      for (let h = 19; h <= 22; h++) {
+        if (socialAdded >= 5) break;
+        const slot = schedule[day].find(d => d.hour === h);
+        if (slot && !slot.block) {
+          slot.block = { type: 'social', name: 'Social', locked: false };
+          socialAdded++;
+        }
+      }
+    }
 
     setGeneratedSchedule(schedule);
     setStep(7);
@@ -253,7 +310,7 @@ export default function DonScheduler() {
 
   const calculateCategoryHours = () => {
     if (!generatedSchedule) return {};
-    const hours = { class: 0, dod: 0, hangout: 0, meeting: 0, meal: 0, study: 0, personal: 0, social: 0 };
+    const hours = { class: 0, dod: 0, hangout: 0, meeting: 0, connection: 0, meal: 0, study: 0, personal: 0, social: 0 };
     DAYS.forEach(day => {
       generatedSchedule[day].forEach(slot => {
         if (slot.block) hours[slot.block.type] = (hours[slot.block.type] || 0) + 1;
@@ -271,6 +328,7 @@ export default function DonScheduler() {
     dod: { background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: 'white' },
     hangout: { background: 'linear-gradient(135deg, #ec4899 0%, #be185d 100%)', color: 'white' },
     meeting: { background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color: 'white' },
+    connection: { background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)', color: 'white' },
     meal: { background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', color: 'white' },
     personal: { background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', color: '#1a1a2e' },
     study: { background: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)', color: '#1a1a2e' },
@@ -350,6 +408,8 @@ export default function DonScheduler() {
         .meeting-type-name { font-weight: 700; font-size: 16px; }
         .meeting-type-freq { font-size: 12px; opacity: 0.7; }
         .meeting-type-duration { font-size: 11px; background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
+        .highlight-box { background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(109,40,217,0.2)); border: 1px solid rgba(139,92,246,0.4); border-radius: 16px; padding: 20px; margin-top: 20px; }
+        .highlight-box h3 { color: #a78bfa; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
       `}</style>
 
       <input type="file" ref={classInputRef} className="hidden-input" accept="image/*" onChange={handleClassFileSelect} />
@@ -538,21 +598,60 @@ export default function DonScheduler() {
 
       {step === 6 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
-          <h2><Users size={24} /> Community Connections</h2>
-          <p className="section-desc">Track your community connection progress</p>
-          <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 25 }}>
-            <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Community Size</label><input className="input-field" type="number" placeholder="# residents" value={communitySize} onChange={e => setCommunitySize(e.target.value)} /></div>
-            <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Completed</label><input className="input-field" type="number" placeholder="Done" value={completedConnections} onChange={e => setCompletedConnections(e.target.value)} /></div>
-            <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Deadline</label><input className="input-field" type="date" value={connectionDeadline} onChange={e => setConnectionDeadline(e.target.value)} /></div>
-          </div>
-          {communitySize && connectionDeadline && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12, marginBottom: 20 }}>
-              <div className="stat-card"><div className="stat-number">{connectionStats.remaining}</div><div className="stat-label">Remaining</div></div>
-              <div className="stat-card"><div className="stat-number">{connectionStats.weeksLeft}</div><div className="stat-label">Weeks Left</div></div>
-              <div className="stat-card"><div className="stat-number">{connectionStats.perWeek}</div><div className="stat-label">Per Week</div></div>
-              <div className="stat-card"><div className="stat-number">{connectionStats.perDay}</div><div className="stat-label">Per Day</div></div>
+          <h2><MessageCircle size={24} /> Community Connections</h2>
+          <p className="section-desc">Plan your community connection conversations</p>
+          
+          <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', marginBottom: 25 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Community Size</label>
+              <input className="input-field" type="number" placeholder="# of residents" value={communitySize} onChange={e => setCommunitySize(e.target.value)} />
             </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Start Date</label>
+              <input className="input-field" type="date" value={connectionStartDate} onChange={e => setConnectionStartDate(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Due Date</label>
+              <input className="input-field" type="date" value={connectionDueDate} onChange={e => setConnectionDueDate(e.target.value)} />
+            </div>
+          </div>
+
+          {communitySize && connectionStartDate && connectionDueDate && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 20 }}>
+                <div className="stat-card">
+                  <div className="stat-number">{connectionStats.total}</div>
+                  <div className="stat-label">Total</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-number">{connectionStats.totalDays}</div>
+                  <div className="stat-label">Days</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-number">{connectionStats.perDay}</div>
+                  <div className="stat-label">Per Day</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-number">{connectionStats.perWeek}</div>
+                  <div className="stat-label">Per Week</div>
+                </div>
+              </div>
+
+              {dodShifts.length > 0 && (
+                <div className="highlight-box">
+                  <h3><Users size={20} /> Connections During DOD</h3>
+                  <p style={{ margin: 0, fontSize: 14 }}>
+                    With <strong>{dodShifts.length} DOD shift{dodShifts.length > 1 ? 's' : ''}</strong> per week, 
+                    aim for <strong style={{ color: '#a78bfa', fontSize: 18 }}>{connectionStats.perDODShift} connections</strong> per shift.
+                  </p>
+                  <p style={{ margin: '10px 0 0', fontSize: 13, opacity: 0.7 }}>
+                    Connection blocks will be added to your schedule at 7 PM before each DOD shift.
+                  </p>
+                </div>
+              )}
+            </>
           )}
+
           <div className="nav-buttons">
             <button className="btn-secondary" onClick={() => setStep(5)}><ChevronLeft size={20} /> Back</button>
             <button className="btn-primary" onClick={generateSchedule}>Generate Schedule <ChevronRight size={20} /></button>
@@ -602,6 +701,7 @@ export default function DonScheduler() {
             {[
               { type: 'class', label: 'Classes', locked: true },
               { type: 'dod', label: 'DOD', locked: true },
+              { type: 'connection', label: 'Connections', locked: true },
               { type: 'hangout', label: 'FNH', locked: true },
               { type: 'meeting', label: 'Meetings', locked: true },
               { type: 'meal', label: 'Meals', locked: false },
@@ -618,11 +718,9 @@ export default function DonScheduler() {
           </div>
 
           <div style={{ marginTop: 20, padding: 15, background: 'rgba(255,255,255,0.05)', borderRadius: 12, display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'center' }}>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#667eea' }}>{categoryHours.class || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Classes</div></div>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#f59e0b' }}>{(categoryHours.dod || 0) + (categoryHours.hangout || 0) + (categoryHours.meeting || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Don Duties</div></div>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#fa709a' }}>{categoryHours.study || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Study</div></div>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#4facfe' }}>{categoryHours.personal || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Personal</div></div>
-            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#a8edea' }}>{categoryHours.social || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Social</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#667eea' }}>{(categoryHours.class || 0) + (categoryHours.study || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Class + Study</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#f59e0b' }}>{(categoryHours.dod || 0) + (categoryHours.hangout || 0) + (categoryHours.meeting || 0) + (categoryHours.connection || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Don Duties</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#4facfe' }}>{(categoryHours.personal || 0) + (categoryHours.social || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Personal + Social</div></div>
           </div>
 
           <div className="nav-buttons">
