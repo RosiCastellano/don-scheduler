@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Loader, Sparkles, AlertCircle, Trash2 } from 'lucide-react';
+import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Loader, Sparkles, AlertCircle, Trash2, Key, Settings } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const HOURS = Array.from({ length: 17 }, (_, i) => i + 7);
@@ -9,6 +9,13 @@ const BLOCK_TYPES = [
   { type: 'study', name: 'Study', locked: false },
   { type: 'personal', name: 'Personal', locked: false },
   { type: 'social', name: 'Social', locked: false },
+];
+
+const MEETING_TYPES = [
+  { id: 'team', name: 'Team Meeting', frequency: 'Weekly', color: '#14b8a6' },
+  { id: 'senior', name: 'Senior Don 1:1', frequency: 'Monthly', color: '#8b5cf6' },
+  { id: 'rlc', name: 'RLC Meeting', frequency: 'Bi-weekly', color: '#f59e0b' },
+  { id: 'community', name: 'Community Meeting', frequency: 'As scheduled', color: '#ec4899' },
 ];
 
 export default function DonScheduler() {
@@ -27,8 +34,11 @@ export default function DonScheduler() {
   const [newDodDay, setNewDodDay] = useState('Monday');
   const [fridayHangouts, setFridayHangouts] = useState([]);
   const [newFNH, setNewFNH] = useState({ date: '', startTime: '19:00', endTime: '21:00' });
-  const [communityMeetings, setCommunityMeetings] = useState([]);
-  const [newMeetingDate, setNewMeetingDate] = useState('');
+  
+  // Meetings state
+  const [meetings, setMeetings] = useState({ team: [], senior: [], rlc: [], community: [] });
+  const [newMeeting, setNewMeeting] = useState({ type: 'team', day: 'Monday', time: '19:00', date: '' });
+  
   const [communitySize, setCommunitySize] = useState('');
   const [connectionDeadline, setConnectionDeadline] = useState('');
   const [completedConnections, setCompletedConnections] = useState('');
@@ -39,11 +49,25 @@ export default function DonScheduler() {
   const [showAddModal, setShowAddModal] = useState(null);
   const [isDraggingClass, setIsDraggingClass] = useState(false);
   const [isDraggingRLM, setIsDraggingRLM] = useState(false);
+  
+  // API Key state
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('anthropic_api_key') || '');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
 
   const classInputRef = useRef(null);
   const rlmInputRef = useRef(null);
 
+  const saveApiKey = (key) => {
+    setApiKey(key);
+    localStorage.setItem('anthropic_api_key', key);
+  };
+
   const parseClassScheduleWithAI = async (imageData) => {
+    if (!apiKey) {
+      setClassParseError('Please add your Anthropic API key first (click the key icon in the header)');
+      return;
+    }
+    
     setParsingClasses(true);
     setClassParseError(null);
     try {
@@ -53,7 +77,12 @@ export default function DonScheduler() {
       
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 3000,
@@ -76,7 +105,7 @@ IMPORTANT RULES:
 - Create a SEPARATE entry for EACH day a class appears
 - Look at which COLUMN the class is in to determine the day
 - Look at which ROW the class starts in to determine start time
-- Course codes look like "XXXX-####H" format (4 letters, dash, 4 numbers, H)
+- Course codes often look like "XXXX-####H" format (4 letters, dash, 4 numbers, H)
 - The colored/shaded cells indicate class times
 
 Return ONLY a valid JSON array, nothing else:
@@ -90,14 +119,17 @@ If you cannot read clearly, return: []` }
           }]
         })
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'API request failed');
+      }
+      
       const data = await response.json();
-      console.log('API Response:', data);
       const text = data.content?.map(item => item.text || "").join("") || "";
-      console.log('Response text:', text);
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        console.log('Parsed classes:', parsed);
         const classesWithIds = parsed.map((cls, idx) => ({
           ...cls, 
           id: Date.now() + idx,
@@ -114,20 +146,30 @@ If you cannot read clearly, return: []` }
       }
     } catch (error) {
       console.error('Parse error:', error);
-      setClassParseError('Could not parse schedule. Please add classes manually.');
+      setClassParseError(error.message || 'Could not parse schedule. Please add classes manually.');
     } finally {
       setParsingClasses(false);
     }
   };
 
   const parseRLMWithAI = async (imageData) => {
+    if (!apiKey) {
+      setRlmParseError('Please add your Anthropic API key first (click the key icon)');
+      return;
+    }
+    
     setParsingRLM(true);
     setRlmParseError(null);
     try {
       const mediaType = imageData.includes('data:image/png') ? 'image/png' : 'image/jpeg';
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 2000,
@@ -161,6 +203,12 @@ If unclear, return: []` }
           }]
         })
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'API request failed');
+      }
+      
       const data = await response.json();
       const text = data.content?.map(item => item.text || "").join("") || "";
       const jsonMatch = text.match(/\[[\s\S]*\]/);
@@ -171,7 +219,7 @@ If unclear, return: []` }
         if (connectionTask && !connectionDeadline) setConnectionDeadline(connectionTask.endDate);
       }
     } catch (error) {
-      setRlmParseError('Could not parse RLM. Use as reference.');
+      setRlmParseError(error.message || 'Could not parse RLM. Use as reference.');
     } finally {
       setParsingRLM(false);
     }
@@ -210,54 +258,22 @@ If unclear, return: []` }
     if (rlmInputRef.current) rlmInputRef.current.value = '';
   };
 
-  // Drag handlers for class upload
-  const handleClassDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingClass(true);
-  };
-
-  const handleClassDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingClass(false);
-  };
-
+  const handleClassDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingClass(true); };
+  const handleClassDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingClass(false); };
   const handleClassDrop = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingClass(false);
-    
+    e.preventDefault(); e.stopPropagation(); setIsDraggingClass(false);
     const files = Array.from(e.dataTransfer.files);
     for (const file of files) {
-      if (file.type.startsWith('image/')) {
-        await processFile(file, 'class');
-      }
+      if (file.type.startsWith('image/')) await processFile(file, 'class');
     }
   };
 
-  // Drag handlers for RLM upload
-  const handleRLMDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingRLM(true);
-  };
-
-  const handleRLMDragLeave = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingRLM(false);
-  };
-
+  const handleRLMDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingRLM(true); };
+  const handleRLMDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingRLM(false); };
   const handleRLMDrop = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingRLM(false);
-    
+    e.preventDefault(); e.stopPropagation(); setIsDraggingRLM(false);
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      await processFile(file, 'rlm');
-    }
+    if (file && file.type.startsWith('image/')) await processFile(file, 'rlm');
   };
 
   const addClass = () => {
@@ -266,6 +282,28 @@ If unclear, return: []` }
       setNewClass({ name: '', day: 'Monday', startTime: '9', endTime: '10' });
       setIsAddingClass(false);
     }
+  };
+
+  const addMeeting = () => {
+    const meetingType = MEETING_TYPES.find(m => m.id === newMeeting.type);
+    const meeting = {
+      id: Date.now(),
+      day: newMeeting.day,
+      time: newMeeting.time,
+      date: newMeeting.date || null
+    };
+    setMeetings(prev => ({
+      ...prev,
+      [newMeeting.type]: [...prev[newMeeting.type], meeting]
+    }));
+    setNewMeeting({ type: 'team', day: 'Monday', time: '19:00', date: '' });
+  };
+
+  const removeMeeting = (type, id) => {
+    setMeetings(prev => ({
+      ...prev,
+      [type]: prev[type].filter(m => m.id !== id)
+    }));
   };
 
   const calculateFNHHours = (start, end) => {
@@ -294,6 +332,7 @@ If unclear, return: []` }
     const schedule = {};
     DAYS.forEach(day => { schedule[day] = HOURS.map(hour => ({ hour, block: null })); });
 
+    // Add classes
     classes.forEach(cls => {
       const daySchedule = schedule[cls.day];
       if (daySchedule) {
@@ -304,6 +343,7 @@ If unclear, return: []` }
       }
     });
 
+    // Add DOD shifts
     dodShifts.forEach(day => {
       for (let h = 20; h <= 22; h++) {
         const slot = schedule[day]?.find(d => d.hour === h);
@@ -311,6 +351,7 @@ If unclear, return: []` }
       }
     });
 
+    // Add Friday hangouts
     fridayHangouts.forEach(fnh => {
       const startH = parseInt(fnh.startTime.split(':')[0]);
       const endH = parseInt(fnh.endTime.split(':')[0]);
@@ -320,11 +361,19 @@ If unclear, return: []` }
       }
     });
 
-    communityMeetings.forEach(() => {
-      const slot = schedule['Sunday']?.find(d => d.hour === 19 && !d.block);
-      if (slot) slot.block = { type: 'meeting', name: 'Meeting', locked: true };
+    // Add all meetings
+    Object.entries(meetings).forEach(([type, meetingList]) => {
+      meetingList.forEach(meeting => {
+        const hour = parseInt(meeting.time.split(':')[0]);
+        const slot = schedule[meeting.day]?.find(d => d.hour === hour);
+        const meetingInfo = MEETING_TYPES.find(m => m.id === type);
+        if (slot && !slot.block) {
+          slot.block = { type: 'meeting', name: meetingInfo?.name.split(' ')[0] || 'Meeting', locked: true, meetingType: type };
+        }
+      });
     });
 
+    // Add meals
     [{ name: 'Breakfast', start: 8, end: 9 }, { name: 'Lunch', start: 12, end: 13 }, { name: 'Dinner', start: 18, end: 19 }].forEach(meal => {
       DAYS.forEach(day => {
         for (let h = meal.start; h < meal.end; h++) {
@@ -334,6 +383,7 @@ If unclear, return: []` }
       });
     });
 
+    // Add personal time
     DAYS.forEach(day => {
       let added = 0;
       for (let h = 14; h <= 22 && added < 3; h++) {
@@ -342,6 +392,7 @@ If unclear, return: []` }
       }
     });
 
+    // Add study time
     const studyPerDay = { Monday: 2, Tuesday: 2, Wednesday: 1, Thursday: 2, Friday: 1, Saturday: 1, Sunday: 1 };
     DAYS.forEach(day => {
       let added = 0;
@@ -351,6 +402,7 @@ If unclear, return: []` }
       }
     });
 
+    // Fill remaining with social
     DAYS.forEach(day => {
       for (let h = 14; h <= 22; h++) {
         const slot = schedule[day].find(d => d.hour === h);
@@ -378,11 +430,9 @@ If unclear, return: []` }
   const handleCellClick = (day, hour) => {
     if (!generatedSchedule) return;
     const slot = generatedSchedule[day].find(d => d.hour === hour);
-    
     if (editMode === 'delete' && slot?.block && !slot.block.locked) {
       const newSchedule = { ...generatedSchedule };
-      const targetSlot = newSchedule[day].find(d => d.hour === hour);
-      targetSlot.block = null;
+      newSchedule[day].find(d => d.hour === hour).block = null;
       setGeneratedSchedule(newSchedule);
     } else if (editMode === 'add' && !slot?.block) {
       setShowAddModal({ day, hour });
@@ -415,6 +465,7 @@ If unclear, return: []` }
   const categoryHours = calculateCategoryHours();
   const connectionStats = calculateConnections();
   const totalFNHHours = fridayHangouts.reduce((sum, f) => sum + (f.hours || 0), 0);
+  const totalMeetings = Object.values(meetings).reduce((sum, arr) => sum + arr.length, 0);
 
   const getBlockStyle = (type) => ({
     class: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' },
@@ -429,7 +480,7 @@ If unclear, return: []` }
 
   const formatHour = (h) => h === 12 ? '12 PM' : h > 12 ? `${h - 12} PM` : `${h} AM`;
   const formatDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-  const formatTime = (t) => { if (!t) return ''; const [h, m] = t.split(':').map(Number); return `${h > 12 ? h - 12 : h}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`; };
+  const formatTime = (t) => { if (!t) return ''; const [h, m] = t.split(':').map(Number); const hour = h % 12 || 12; return `${hour}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`; };
   const getTaskColor = (type) => ({ deadline: '#ef4444', event: '#22c55e', meeting: '#14b8a6', hangout: '#ec4899' }[type] || '#667eea');
 
   return (
@@ -474,7 +525,7 @@ If unclear, return: []` }
         .legend-color { width: 14px; height: 14px; border-radius: 4px; }
         .legend-hours { opacity: 0.7; font-size: 10px; }
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
-        .modal-content { background: rgba(48,43,99,0.95); border-radius: 20px; padding: 30px; max-width: 400px; width: 100%; }
+        .modal-content { background: rgba(48,43,99,0.95); border-radius: 20px; padding: 30px; max-width: 500px; width: 100%; }
         .parsing-indicator { display: flex; align-items: center; gap: 12px; padding: 16px 20px; background: rgba(102,126,234,0.2); border: 1px solid rgba(102,126,234,0.4); border-radius: 12px; margin-bottom: 20px; }
         .spinner { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -502,23 +553,22 @@ If unclear, return: []` }
         .image-preview { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
         .image-preview img { width: 80px; height: 60px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
         .hidden-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+        .api-key-btn { position: fixed; top: 20px; right: 20px; background: ${apiKey ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; border: 1px solid ${apiKey ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}; color: ${apiKey ? '#22c55e' : '#ef4444'}; padding: 10px 16px; border-radius: 10px; cursor: pointer; font-family: inherit; font-weight: 600; display: flex; align-items: center; gap: 8px; z-index: 100; }
+        .meeting-type-card { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; margin-bottom: 15px; border-left: 4px solid; }
+        .meeting-type-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .meeting-type-name { font-weight: 700; font-size: 16px; }
+        .meeting-type-freq { font-size: 12px; opacity: 0.7; }
       `}</style>
 
       {/* Hidden file inputs */}
-      <input 
-        type="file" 
-        ref={classInputRef} 
-        className="hidden-input" 
-        accept="image/*" 
-        onChange={handleClassFileSelect} 
-      />
-      <input 
-        type="file" 
-        ref={rlmInputRef} 
-        className="hidden-input" 
-        accept="image/*" 
-        onChange={handleRLMFileSelect} 
-      />
+      <input type="file" ref={classInputRef} className="hidden-input" accept="image/*" onChange={handleClassFileSelect} />
+      <input type="file" ref={rlmInputRef} className="hidden-input" accept="image/*" onChange={handleRLMFileSelect} />
+
+      {/* API Key Button */}
+      <button className="api-key-btn" onClick={() => setShowApiKeyInput(true)}>
+        <Key size={16} />
+        {apiKey ? 'API Key Set' : 'Add API Key'}
+      </button>
 
       <h1>Don Schedule Manager</h1>
       <p className="subtitle">Balance classes, don duties & personal time</p>
@@ -535,31 +585,18 @@ If unclear, return: []` }
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
           <h2><BookOpen size={24} /> Class Schedule</h2>
           <p className="section-desc">Upload a screenshot of your timetable - AI will extract your classes</p>
+          {!apiKey && <div className="error-box"><Key size={18} />Add your Anthropic API key first (click button in top right)</div>}
           {parsingClasses && <div className="parsing-indicator"><Loader size={20} className="spinner" /><span><strong>Analyzing schedule...</strong> This may take a few seconds</span></div>}
           {classParseError && <div className="error-box"><AlertCircle size={18} />{classParseError}</div>}
-          {classes.length > 0 && !parsingClasses && <div className="success-box"><Sparkles size={18} /><strong>{classes.length} class blocks detected!</strong> Review below and edit if needed.</div>}
+          {classes.length > 0 && !parsingClasses && <div className="success-box"><Sparkles size={18} /><strong>{classes.length} class blocks detected!</strong></div>}
           
-          <div 
-            className={`upload-zone ${isDraggingClass ? 'dragging' : ''}`}
-            onClick={() => classInputRef.current?.click()}
-            onDragOver={handleClassDragOver}
-            onDragEnter={handleClassDragOver}
-            onDragLeave={handleClassDragLeave}
-            onDrop={handleClassDrop}
-            style={{ marginBottom: 20 }}
-          >
+          <div className={`upload-zone ${isDraggingClass ? 'dragging' : ''}`} onClick={() => classInputRef.current?.click()} onDragOver={handleClassDragOver} onDragEnter={handleClassDragOver} onDragLeave={handleClassDragLeave} onDrop={handleClassDrop} style={{ marginBottom: 20 }}>
             <Image size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
             <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
             <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>Supports timetable grids, screenshots, etc.</div>
           </div>
           
-          {classImages.length > 0 && (
-            <div className="image-preview">
-              {classImages.map((img, idx) => (
-                <img key={idx} src={img.data} alt="Schedule" onClick={() => setShowImageModal(img.data)} />
-              ))}
-            </div>
-          )}
+          {classImages.length > 0 && <div className="image-preview">{classImages.map((img, idx) => <img key={idx} src={img.data} alt="Schedule" onClick={() => setShowImageModal(img.data)} />)}</div>}
           
           <div className="form-row" style={{ marginTop: 15 }}>
             {!isAddingClass && <button className="btn-secondary" onClick={() => setIsAddingClass(true)}><Plus size={18} /> Add Manually</button>}
@@ -613,27 +650,14 @@ If unclear, return: []` }
           {rlmParseError && <div className="error-box"><AlertCircle size={18} />{rlmParseError}</div>}
           {rlmTasks.length > 0 && !parsingRLM && <div className="success-box"><Sparkles size={18} /><strong>{rlmTasks.length} tasks detected!</strong></div>}
           {!rlmImage ? (
-            <div 
-              className={`upload-zone ${isDraggingRLM ? 'dragging' : ''}`}
-              onClick={() => rlmInputRef.current?.click()}
-              onDragOver={handleRLMDragOver}
-              onDragEnter={handleRLMDragOver}
-              onDragLeave={handleRLMDragLeave}
-              onDrop={handleRLMDrop}
-              style={{ marginBottom: 20 }}
-            >
+            <div className={`upload-zone ${isDraggingRLM ? 'dragging' : ''}`} onClick={() => rlmInputRef.current?.click()} onDragOver={handleRLMDragOver} onDragEnter={handleRLMDragOver} onDragLeave={handleRLMDragLeave} onDrop={handleRLMDrop} style={{ marginBottom: 20 }}>
               <Calendar size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
               <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
-              <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>Your Term at a Glance calendar</div>
             </div>
           ) : (
             <div style={{ marginBottom: 20 }}>
               <img src={rlmImage} alt="RLM" style={{ maxWidth: '100%', maxHeight: 250, borderRadius: 12, cursor: 'pointer', display: 'block', margin: '0 auto 15px' }} onClick={() => setShowImageModal(rlmImage)} />
-              <div style={{ textAlign: 'center', marginBottom: 15 }}>
-                <button className="btn-secondary" onClick={() => { setRlmImage(null); setRlmTasks([]); }}>
-                  <Trash2 size={16} /> Remove & Upload New
-                </button>
-              </div>
+              <div style={{ textAlign: 'center', marginBottom: 15 }}><button className="btn-secondary" onClick={() => { setRlmImage(null); setRlmTasks([]); }}><Trash2 size={16} /> Remove</button></div>
               {rlmTasks.length > 0 && (
                 <div>
                   <h3 style={{ fontSize: 16, marginBottom: 12 }}><Sparkles size={18} /> Extracted Deadlines</h3>
@@ -668,11 +692,7 @@ If unclear, return: []` }
             </select>
             <button className="btn-add" onClick={() => { if (!dodShifts.includes(newDodDay)) setDodShifts([...dodShifts, newDodDay]); }}><Plus size={18} /> Add</button>
           </div>
-          {dodShifts.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-              {dodShifts.map(day => <span key={day} className="tag dod">{day}<button onClick={() => setDodShifts(dodShifts.filter(d => d !== day))}>×</button></span>)}
-            </div>
-          )}
+          {dodShifts.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap' }}>{dodShifts.map(day => <span key={day} className="tag dod">{day}<button onClick={() => setDodShifts(dodShifts.filter(d => d !== day))}>×</button></span>)}</div>}
           <div className="nav-buttons">
             <button className="btn-secondary" onClick={() => setStep(2)}><ChevronLeft size={20} /> Back</button>
             <button className="btn-primary" onClick={() => setStep(4)}>Continue <ChevronRight size={20} /></button>
@@ -698,9 +718,7 @@ If unclear, return: []` }
           {fridayHangouts.length > 0 && (
             <div>
               <div style={{ fontWeight: 600, marginBottom: 10, display: 'flex', justifyContent: 'space-between' }}><span>Hangouts:</span><span style={{ opacity: 0.7 }}>Total: {totalFNHHours}h</span></div>
-              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                {fridayHangouts.map(fnh => <span key={fnh.id} className="tag fnh">{formatDate(fnh.date)} • {formatTime(fnh.startTime)}-{formatTime(fnh.endTime)} ({fnh.hours}h)<button onClick={() => setFridayHangouts(fridayHangouts.filter(f => f.id !== fnh.id))}>×</button></span>)}
-              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap' }}>{fridayHangouts.map(fnh => <span key={fnh.id} className="tag fnh">{formatDate(fnh.date)} • {formatTime(fnh.startTime)}-{formatTime(fnh.endTime)} ({fnh.hours}h)<button onClick={() => setFridayHangouts(fridayHangouts.filter(f => f.id !== fnh.id))}>×</button></span>)}</div>
             </div>
           )}
           <div className="nav-buttons">
@@ -712,12 +730,46 @@ If unclear, return: []` }
 
       {step === 5 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
-          <h2><UserCheck size={24} /> Community Meetings</h2>
-          <div className="form-row">
-            <input type="date" className="input-field" value={newMeetingDate} onChange={e => setNewMeetingDate(e.target.value)} style={{ width: 'auto' }} />
-            <button className="btn-add" onClick={() => { if (newMeetingDate) { setCommunityMeetings([...communityMeetings, newMeetingDate]); setNewMeetingDate(''); } }} disabled={!newMeetingDate}><Plus size={18} /> Add</button>
+          <h2><UserCheck size={24} /> Meetings</h2>
+          <p className="section-desc">Add your recurring meetings</p>
+          
+          {/* Add Meeting Form */}
+          <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 25 }}>
+            <div className="form-row">
+              <select className="input-field" value={newMeeting.type} onChange={e => setNewMeeting({ ...newMeeting, type: e.target.value })} style={{ flex: 1 }}>
+                {MEETING_TYPES.map(m => <option key={m.id} value={m.id}>{m.name} ({m.frequency})</option>)}
+              </select>
+              <select className="input-field" value={newMeeting.day} onChange={e => setNewMeeting({ ...newMeeting, day: e.target.value })} style={{ width: 'auto' }}>
+                {DAYS.map(d => <option key={d}>{d}</option>)}
+              </select>
+              <input type="time" className="input-field" value={newMeeting.time} onChange={e => setNewMeeting({ ...newMeeting, time: e.target.value })} style={{ width: 130 }} />
+              <button className="btn-add" onClick={addMeeting}><Plus size={18} /> Add</button>
+            </div>
           </div>
-          {communityMeetings.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap' }}>{communityMeetings.sort().map(d => <span key={d} className="tag meeting">{formatDate(d)}<button onClick={() => setCommunityMeetings(communityMeetings.filter(m => m !== d))}>×</button></span>)}</div>}
+
+          {/* Meeting Types */}
+          {MEETING_TYPES.map(meetingType => (
+            <div key={meetingType.id} className="meeting-type-card" style={{ borderLeftColor: meetingType.color }}>
+              <div className="meeting-type-header">
+                <div>
+                  <span className="meeting-type-name">{meetingType.name}</span>
+                  <span className="meeting-type-freq" style={{ marginLeft: 10 }}>{meetingType.frequency}</span>
+                </div>
+                <span style={{ fontSize: 14, opacity: 0.7 }}>{meetings[meetingType.id].length} scheduled</span>
+              </div>
+              {meetings[meetingType.id].length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {meetings[meetingType.id].map(m => (
+                    <span key={m.id} className="tag meeting" style={{ background: meetingType.color, margin: 0 }}>
+                      {m.day} @ {formatTime(m.time)}
+                      <button onClick={() => removeMeeting(meetingType.id, m.id)}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
           <div className="nav-buttons">
             <button className="btn-secondary" onClick={() => setStep(4)}><ChevronLeft size={20} /> Back</button>
             <button className="btn-primary" onClick={() => setStep(6)}>Continue <ChevronRight size={20} /></button>
@@ -753,15 +805,9 @@ If unclear, return: []` }
           <h2><Calendar size={24} /> Your Schedule</h2>
           
           <div className="edit-toolbar">
-            <button className={`edit-btn drag ${editMode === 'drag' ? 'active' : ''}`} onClick={() => setEditMode('drag')}>
-              <GripVertical size={16} /> Move
-            </button>
-            <button className={`edit-btn delete ${editMode === 'delete' ? 'active' : ''}`} onClick={() => setEditMode('delete')}>
-              <Trash2 size={16} /> Delete
-            </button>
-            <button className={`edit-btn add ${editMode === 'add' ? 'active' : ''}`} onClick={() => setEditMode('add')}>
-              <Plus size={16} /> Add
-            </button>
+            <button className={`edit-btn drag ${editMode === 'drag' ? 'active' : ''}`} onClick={() => setEditMode('drag')}><GripVertical size={16} /> Move</button>
+            <button className={`edit-btn delete ${editMode === 'delete' ? 'active' : ''}`} onClick={() => setEditMode('delete')}><Trash2 size={16} /> Delete</button>
+            <button className={`edit-btn add ${editMode === 'add' ? 'active' : ''}`} onClick={() => setEditMode('add')}><Plus size={16} /> Add</button>
             <span style={{ marginLeft: 'auto', opacity: 0.7, fontSize: 13 }}>
               {editMode === 'drag' && '🔒 = locked • Drag unlocked blocks'}
               {editMode === 'delete' && 'Click unlocked blocks to remove'}
@@ -782,18 +828,7 @@ If unclear, return: []` }
                     const draggable = editMode === 'drag' && block && !block.locked;
                     const cellClass = `schedule-cell ${draggable ? 'draggable' : ''} ${editMode === 'delete' && block && !block.locked ? 'delete-mode' : ''} ${editMode === 'add' && !block ? 'add-mode' : ''}`;
                     return (
-                      <div 
-                        key={`${day}-${hour}`} 
-                        className={cellClass} 
-                        style={block ? getBlockStyle(block.type) : { background: 'rgba(255,255,255,0.03)' }} 
-                        draggable={draggable} 
-                        onDragStart={() => draggable && setDraggedBlock({ day, hour, block })} 
-                        onDragEnd={() => setDraggedBlock(null)} 
-                        onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }} 
-                        onDragLeave={e => e.currentTarget.classList.remove('drag-over')} 
-                        onDrop={e => { e.currentTarget.classList.remove('drag-over'); handleBlockDrop(day, hour); }}
-                        onClick={() => handleCellClick(day, hour)}
-                      >
+                      <div key={`${day}-${hour}`} className={cellClass} style={block ? getBlockStyle(block.type) : { background: 'rgba(255,255,255,0.03)' }} draggable={draggable} onDragStart={() => draggable && setDraggedBlock({ day, hour, block })} onDragEnd={() => setDraggedBlock(null)} onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }} onDragLeave={e => e.currentTarget.classList.remove('drag-over')} onDrop={e => { e.currentTarget.classList.remove('drag-over'); handleBlockDrop(day, hour); }} onClick={() => handleCellClick(day, hour)}>
                         {block?.name || ''}{block?.locked && <Lock size={8} style={{ position: 'absolute', top: 2, right: 2, opacity: 0.6 }} />}
                       </div>
                     );
@@ -808,7 +843,7 @@ If unclear, return: []` }
               { type: 'class', label: 'Classes', locked: true },
               { type: 'dod', label: 'DOD', locked: true },
               { type: 'hangout', label: 'FNH', locked: true },
-              { type: 'meeting', label: 'Meeting', locked: true },
+              { type: 'meeting', label: 'Meetings', locked: true },
               { type: 'meal', label: 'Meals', locked: false },
               { type: 'study', label: 'Study', locked: false },
               { type: 'personal', label: 'Personal', locked: false },
@@ -823,40 +858,12 @@ If unclear, return: []` }
           </div>
 
           <div style={{ marginTop: 20, padding: 15, background: 'rgba(255,255,255,0.05)', borderRadius: 12, display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'center' }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: '#667eea' }}>{categoryHours.class || 0}h</div>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>Classes</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: '#f59e0b' }}>{(categoryHours.dod || 0) + (categoryHours.hangout || 0) + (categoryHours.meeting || 0)}h</div>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>Don Duties</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: '#fa709a' }}>{categoryHours.study || 0}h</div>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>Study</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: '#4facfe' }}>{categoryHours.personal || 0}h</div>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>Personal</div>
-            </div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 800, color: '#a8edea' }}>{categoryHours.social || 0}h</div>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>Social</div>
-            </div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#667eea' }}>{categoryHours.class || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Classes</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#f59e0b' }}>{(categoryHours.dod || 0) + (categoryHours.hangout || 0) + (categoryHours.meeting || 0)}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Don Duties</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#fa709a' }}>{categoryHours.study || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Study</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#4facfe' }}>{categoryHours.personal || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Personal</div></div>
+            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 24, fontWeight: 800, color: '#a8edea' }}>{categoryHours.social || 0}h</div><div style={{ fontSize: 11, opacity: 0.7 }}>Social</div></div>
           </div>
-
-          {rlmTasks.length > 0 && (
-            <div style={{ marginTop: 25, padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14 }}>
-              <h3 style={{ marginBottom: 12, fontSize: 16 }}>📋 Deadlines (from RLM)</h3>
-              {rlmTasks.slice(0,5).map((task, idx) => (
-                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13, marginBottom: 8 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: getTaskColor(task.type) }}></span>
-                  <span style={{ flex: 1 }}>{task.name}</span>
-                  <span style={{ opacity: 0.7 }}>{formatDate(task.endDate)}</span>
-                </div>
-              ))}
-            </div>
-          )}
 
           <div className="nav-buttons">
             <button className="btn-secondary" onClick={() => setStep(6)}><ChevronLeft size={20} /> Edit</button>
@@ -865,6 +872,20 @@ If unclear, return: []` }
         </div>
       )}
 
+      {/* API Key Modal */}
+      {showApiKeyInput && (
+        <div className="modal-overlay" onClick={() => setShowApiKeyInput(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}><Key size={20} /> Anthropic API Key</h3>
+            <p style={{ opacity: 0.7, marginBottom: 20, fontSize: 14 }}>Required for AI schedule parsing. Get one free at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: '#667eea' }}>console.anthropic.com</a></p>
+            <input className="input-field" type="password" placeholder="sk-ant-..." value={apiKey} onChange={e => saveApiKey(e.target.value)} style={{ marginBottom: 15 }} />
+            {apiKey && <div className="success-box"><Sparkles size={18} />API key saved! It's stored locally in your browser.</div>}
+            <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowApiKeyInput(false)}>Done</button>
+          </div>
+        </div>
+      )}
+
+      {/* Add Block Modal */}
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -872,9 +893,7 @@ If unclear, return: []` }
             <p style={{ opacity: 0.7, marginBottom: 15, fontSize: 14 }}>{showAddModal.day} at {formatHour(showAddModal.hour)}</p>
             <div className="add-block-grid">
               {BLOCK_TYPES.map(bt => (
-                <button key={bt.type} className="add-block-btn" style={getBlockStyle(bt.type)} onClick={() => addBlockToSchedule(showAddModal.day, showAddModal.hour, bt.type)}>
-                  {bt.name}
-                </button>
+                <button key={bt.type} className="add-block-btn" style={getBlockStyle(bt.type)} onClick={() => addBlockToSchedule(showAddModal.day, showAddModal.hour, bt.type)}>{bt.name}</button>
               ))}
             </div>
             <button className="btn-secondary" style={{ width: '100%', marginTop: 15, justifyContent: 'center' }} onClick={() => setShowAddModal(null)}>Cancel</button>
@@ -882,6 +901,7 @@ If unclear, return: []` }
         </div>
       )}
 
+      {/* Image Modal */}
       {showImageModal && typeof showImageModal === 'string' && (
         <div className="modal-overlay" onClick={() => setShowImageModal(null)}>
           <img src={showImageModal} alt="Full" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12 }} />
