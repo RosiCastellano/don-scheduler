@@ -35,8 +35,7 @@ export default function DonScheduler() {
   const [generatedSchedule, setGeneratedSchedule] = useState(null);
   const [draggedBlock, setDraggedBlock] = useState(null);
   const [showImageModal, setShowImageModal] = useState(null);
-  const [editMode, setEditMode] = useState('drag'); // 'drag', 'delete', 'add'
-  const [addBlockType, setAddBlockType] = useState('study');
+  const [editMode, setEditMode] = useState('drag');
   const [showAddModal, setShowAddModal] = useState(null);
 
   const parseClassScheduleWithAI = async (imageData) => {
@@ -48,12 +47,36 @@ export default function DonScheduler() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 2000,
+          max_tokens: 3000,
           messages: [{
             role: "user",
             content: [
-              { type: "image", source: { type: "base64", media_type: "image/png", data: imageData.split(',')[1] } },
-              { type: "text", text: `Analyze this class schedule image and extract all classes. Return ONLY a JSON array: [{"name": "PSYCH 101", "day": "Monday", "startTime": "09:00", "endTime": "10:30"}]. Create separate entries for each day a class meets. If unclear, return [].` }
+              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageData.split(',')[1] } },
+              { type: "text", text: `Analyze this class schedule image carefully. This is likely a university timetable grid with:
+- Days of the week as columns (Monday, Tuesday, Wednesday, Thursday, Friday)
+- Hours/times as rows
+- Class blocks containing course codes, times, and locations
+
+For each class block you find, extract:
+1. Course name/code (e.g., "SOCI-2110H", "HIST-3320H", "CAST-3740H") - use the short version without section codes like "-A-F01"
+2. The day of the week it's on (Monday, Tuesday, Wednesday, Thursday, Friday)
+3. Start time in 24-hour format (e.g., "09:00", "13:00", "17:00")
+4. End time in 24-hour format (e.g., "11:50", "15:50", "18:50")
+
+IMPORTANT: 
+- If a class appears in the same time slot on multiple days, create SEPARATE entries for EACH day
+- Look for time ranges like "09:00-11:50" within the cell text
+- Course codes often look like "SUBJ-####H" format
+- Round end times up to the next hour for scheduling (11:50 → 12:00, 15:50 → 16:00, 18:50 → 19:00, 21:50 → 22:00)
+
+Return ONLY a valid JSON array with no other text:
+[
+  {"name": "SOCI-2110H", "day": "Tuesday", "startTime": "09:00", "endTime": "12:00"},
+  {"name": "SOCI-2110H", "day": "Monday", "startTime": "09:00", "endTime": "12:00"},
+  {"name": "HIST-3320H", "day": "Tuesday", "startTime": "13:00", "endTime": "16:00"}
+]
+
+If you cannot read the schedule clearly, return an empty array: []` }
             ]
           }]
         })
@@ -64,13 +87,20 @@ export default function DonScheduler() {
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         const classesWithIds = parsed.map((cls, idx) => ({
-          ...cls, id: Date.now() + idx,
+          ...cls, 
+          id: Date.now() + idx,
           startTime: String(parseInt(cls.startTime?.split(':')[0]) || 9),
           endTime: String(parseInt(cls.endTime?.split(':')[0]) || 10)
         }));
         setClasses(prev => [...prev, ...classesWithIds]);
+        if (classesWithIds.length === 0) {
+          setClassParseError('No classes detected. Try adding manually.');
+        }
+      } else {
+        setClassParseError('Could not parse response. Please add classes manually.');
       }
     } catch (error) {
+      console.error('Parse error:', error);
       setClassParseError('Could not parse schedule. Please add classes manually.');
     } finally {
       setParsingClasses(false);
@@ -91,7 +121,29 @@ export default function DonScheduler() {
             role: "user",
             content: [
               { type: "image", source: { type: "base64", media_type: "image/png", data: imageData.split(',')[1] } },
-              { type: "text", text: `Analyze this RLM calendar and extract all tasks/deadlines. Return ONLY JSON: [{"name": "Community Connection #1 Due", "startDate": "2025-08-31", "endDate": "2025-09-08", "type": "deadline"}]. Types: deadline, event, meeting, hangout. Capture date ranges from arrows. If unclear, return [].` }
+              { type: "text", text: `Analyze this RLM/residence life calendar and extract all tasks, events, and deadlines.
+
+Look for:
+- Tasks with due dates (e.g., "Community Connection Conversations #1 Due")
+- Events spanning date ranges (shown by arrows or lines)
+- Friday Night Hangouts
+- Meetings
+- Move-in days, orientation events
+
+For each item found, extract:
+- Task/event name
+- Start date (YYYY-MM-DD format)
+- End date/due date (YYYY-MM-DD format)
+- Type: "deadline", "event", "meeting", or "hangout"
+
+Return ONLY a valid JSON array ordered by date:
+[
+  {"name": "Move In Day", "startDate": "2025-08-31", "endDate": "2025-08-31", "type": "event"},
+  {"name": "Community Connection Conversations #1 Due", "startDate": "2025-08-31", "endDate": "2025-09-08", "type": "deadline"},
+  {"name": "Friday Night Hangout", "startDate": "2025-09-12", "endDate": "2025-09-12", "type": "hangout"}
+]
+
+If unclear, return: []` }
             ]
           }]
         })
@@ -200,7 +252,6 @@ export default function DonScheduler() {
     });
 
     communityMeetings.forEach(() => {
-      // Add a meeting block on Sunday evening as placeholder
       const slot = schedule['Sunday']?.find(d => d.hour === 19 && !d.block);
       if (slot) slot.block = { type: 'meeting', name: 'Meeting', locked: true };
     });
@@ -281,7 +332,6 @@ export default function DonScheduler() {
     setShowAddModal(null);
   };
 
-  // Calculate hours per category
   const calculateCategoryHours = () => {
     if (!generatedSchedule) return {};
     const hours = { class: 0, dod: 0, hangout: 0, meeting: 0, meal: 0, study: 0, personal: 0, social: 0 };
@@ -381,6 +431,8 @@ export default function DonScheduler() {
         .add-block-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; }
         .add-block-btn { padding: 15px; border-radius: 12px; border: none; cursor: pointer; font-family: inherit; font-weight: 600; font-size: 14px; transition: all 0.2s; }
         .add-block-btn:hover { transform: scale(1.03); }
+        .image-preview { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
+        .image-preview img { width: 80px; height: 60px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
       `}</style>
 
       <h1>Don Schedule Manager</h1>
@@ -397,22 +449,33 @@ export default function DonScheduler() {
       {step === 1 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
           <h2><BookOpen size={24} /> Class Schedule</h2>
-          <p className="section-desc">Upload a photo - AI extracts classes automatically</p>
-          {parsingClasses && <div className="parsing-indicator"><Loader size={20} className="spinner" /><span><strong>Analyzing...</strong></span></div>}
+          <p className="section-desc">Upload a screenshot of your timetable - AI will extract your classes</p>
+          {parsingClasses && <div className="parsing-indicator"><Loader size={20} className="spinner" /><span><strong>Analyzing schedule...</strong> This may take a few seconds</span></div>}
           {classParseError && <div className="error-box"><AlertCircle size={18} />{classParseError}</div>}
-          {classes.length > 0 && !parsingClasses && <div className="success-box"><Sparkles size={18} /><strong>{classes.length} classes detected!</strong></div>}
+          {classes.length > 0 && !parsingClasses && <div className="success-box"><Sparkles size={18} /><strong>{classes.length} class blocks detected!</strong> Review below and edit if needed.</div>}
           <label className="upload-zone" style={{ display: 'block', marginBottom: 20 }}>
             <Image size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
             <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
+            <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>Supports timetable grids, screenshots, etc.</div>
             <input type="file" accept="image/*" onChange={handleClassImageUpload} style={{ display: 'none' }} />
           </label>
-          <div className="form-row">
+          
+          {classImages.length > 0 && (
+            <div className="image-preview">
+              {classImages.map((img, idx) => (
+                <img key={idx} src={img.data} alt="Schedule" onClick={() => setShowImageModal(img.data)} />
+              ))}
+            </div>
+          )}
+          
+          <div className="form-row" style={{ marginTop: 15 }}>
             {!isAddingClass && <button className="btn-secondary" onClick={() => setIsAddingClass(true)}><Plus size={18} /> Add Manually</button>}
+            {classes.length > 0 && <button className="btn-secondary" onClick={() => setClasses([])}><Trash2 size={18} /> Clear All</button>}
           </div>
           {isAddingClass && (
             <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 20 }}>
               <div className="form-row">
-                <input className="input-field" placeholder="Class name" value={newClass.name} onChange={e => setNewClass({ ...newClass, name: e.target.value })} style={{ flex: 1 }} />
+                <input className="input-field" placeholder="Class name (e.g., SOCI-2110H)" value={newClass.name} onChange={e => setNewClass({ ...newClass, name: e.target.value })} style={{ flex: 1 }} />
                 <select className="input-field" value={newClass.day} onChange={e => setNewClass({ ...newClass, day: e.target.value })} style={{ width: 'auto' }}>
                   {DAYS.map(d => <option key={d}>{d}</option>)}
                 </select>
@@ -431,13 +494,16 @@ export default function DonScheduler() {
             </div>
           )}
           {classes.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', marginBottom: 20 }}>
-              {classes.map(cls => (
-                <span key={cls.id} className="tag class">
-                  {cls.name} • {cls.day?.slice(0,3)} {formatHour(parseInt(cls.startTime))}-{formatHour(parseInt(cls.endTime))}
-                  <button onClick={() => setClasses(classes.filter(c => c.id !== cls.id))}>×</button>
-                </span>
-              ))}
+            <div style={{ marginTop: 15 }}>
+              <div style={{ fontWeight: 600, marginBottom: 10 }}>Detected Classes:</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                {classes.map(cls => (
+                  <span key={cls.id} className="tag class">
+                    {cls.name} • {cls.day?.slice(0,3)} {formatHour(parseInt(cls.startTime))}-{formatHour(parseInt(cls.endTime))}
+                    <button onClick={() => setClasses(classes.filter(c => c.id !== cls.id))}>×</button>
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           <div className="nav-buttons"><div></div><button className="btn-primary" onClick={() => setStep(2)}>Continue <ChevronRight size={20} /></button></div>
@@ -578,7 +644,6 @@ export default function DonScheduler() {
         <div className="glass-card">
           <h2><Calendar size={24} /> Your Schedule</h2>
           
-          {/* Edit Toolbar */}
           <div className="edit-toolbar">
             <button className={`edit-btn drag ${editMode === 'drag' ? 'active' : ''}`} onClick={() => setEditMode('drag')}>
               <GripVertical size={16} /> Move
@@ -630,7 +695,6 @@ export default function DonScheduler() {
             </div>
           </div>
 
-          {/* Legend with Hours */}
           <div className="legend">
             {[
               { type: 'class', label: 'Classes', locked: true },
@@ -650,7 +714,6 @@ export default function DonScheduler() {
             ))}
           </div>
 
-          {/* Weekly Summary */}
           <div style={{ marginTop: 20, padding: 15, background: 'rgba(255,255,255,0.05)', borderRadius: 12, display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'center' }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 24, fontWeight: 800, color: '#667eea' }}>{categoryHours.class || 0}h</div>
@@ -694,7 +757,6 @@ export default function DonScheduler() {
         </div>
       )}
 
-      {/* Add Block Modal */}
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -702,12 +764,7 @@ export default function DonScheduler() {
             <p style={{ opacity: 0.7, marginBottom: 15, fontSize: 14 }}>{showAddModal.day} at {formatHour(showAddModal.hour)}</p>
             <div className="add-block-grid">
               {BLOCK_TYPES.map(bt => (
-                <button 
-                  key={bt.type} 
-                  className="add-block-btn" 
-                  style={getBlockStyle(bt.type)}
-                  onClick={() => addBlockToSchedule(showAddModal.day, showAddModal.hour, bt.type)}
-                >
+                <button key={bt.type} className="add-block-btn" style={getBlockStyle(bt.type)} onClick={() => addBlockToSchedule(showAddModal.day, showAddModal.hour, bt.type)}>
                   {bt.name}
                 </button>
               ))}
@@ -719,7 +776,7 @@ export default function DonScheduler() {
 
       {showImageModal && typeof showImageModal === 'string' && (
         <div className="modal-overlay" onClick={() => setShowImageModal(null)}>
-          <div className="modal-content"><img src={showImageModal} alt="Full" /></div>
+          <img src={showImageModal} alt="Full" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12 }} />
         </div>
       )}
     </div>
