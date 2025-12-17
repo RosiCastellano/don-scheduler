@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Loader, Sparkles, AlertCircle, Trash2, Key, Settings } from 'lucide-react';
+import { Upload, Plus, X, Calendar, Clock, Users, BookOpen, Image, ChevronRight, ChevronLeft, GripVertical, Lock, PartyPopper, UserCheck, Trash2 } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const HOURS = Array.from({ length: 17 }, (_, i) => i + 7);
@@ -22,23 +22,14 @@ export default function DonScheduler() {
   const [step, setStep] = useState(1);
   const [classes, setClasses] = useState([]);
   const [newClass, setNewClass] = useState({ name: '', day: 'Monday', startTime: '9', endTime: '10' });
-  const [isAddingClass, setIsAddingClass] = useState(false);
   const [classImages, setClassImages] = useState([]);
-  const [parsingClasses, setParsingClasses] = useState(false);
-  const [classParseError, setClassParseError] = useState(null);
   const [rlmImage, setRlmImage] = useState(null);
-  const [rlmTasks, setRlmTasks] = useState([]);
-  const [parsingRLM, setParsingRLM] = useState(false);
-  const [rlmParseError, setRlmParseError] = useState(null);
   const [dodShifts, setDodShifts] = useState([]);
   const [newDodDay, setNewDodDay] = useState('Monday');
   const [fridayHangouts, setFridayHangouts] = useState([]);
   const [newFNH, setNewFNH] = useState({ date: '', startTime: '19:00', endTime: '21:00' });
-  
-  // Meetings state
   const [meetings, setMeetings] = useState({ team: [], senior: [], rlc: [], community: [] });
-  const [newMeeting, setNewMeeting] = useState({ type: 'team', day: 'Monday', time: '19:00', date: '' });
-  
+  const [newMeeting, setNewMeeting] = useState({ type: 'team', day: 'Monday', time: '19:00' });
   const [communitySize, setCommunitySize] = useState('');
   const [connectionDeadline, setConnectionDeadline] = useState('');
   const [completedConnections, setCompletedConnections] = useState('');
@@ -49,261 +40,72 @@ export default function DonScheduler() {
   const [showAddModal, setShowAddModal] = useState(null);
   const [isDraggingClass, setIsDraggingClass] = useState(false);
   const [isDraggingRLM, setIsDraggingRLM] = useState(false);
-  
-  // API Key state
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('anthropic_api_key') || '');
-  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
 
   const classInputRef = useRef(null);
   const rlmInputRef = useRef(null);
 
-  const saveApiKey = (key) => {
-    setApiKey(key);
-    localStorage.setItem('anthropic_api_key', key);
-  };
-
-  const parseClassScheduleWithAI = async (imageData) => {
-    if (!apiKey) {
-      setClassParseError('Please add your Anthropic API key first (click the key icon in the header)');
-      return;
-    }
-    
-    setParsingClasses(true);
-    setClassParseError(null);
-    try {
-      const mediaType = imageData.includes('data:image/png') ? 'image/png' : 
-                        imageData.includes('data:image/jpeg') ? 'image/jpeg' : 
-                        imageData.includes('data:image/jpg') ? 'image/jpeg' : 'image/png';
-      
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true"
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 3000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: mediaType, data: imageData.split(',')[1] } },
-              { type: "text", text: `Analyze this class schedule image carefully. This is a university timetable grid with:
-- Days of the week as columns (Monday, Tuesday, Wednesday, Thursday, Friday)
-- Hours/times as rows (8:00, 9:00, 10:00, etc.)
-- Class blocks containing course codes, times, and room locations
-
-For each class block you find, extract:
-1. Course name/code (e.g., "SOCI-2110H", "HIST-3320H", "CAST-3740H")
-2. The day of the week it appears in (Monday, Tuesday, Wednesday, Thursday, Friday)
-3. Start time in 24-hour format (e.g., "09:00", "13:00", "17:00")
-4. End time in 24-hour format - round up to next hour (11:50 becomes "12:00", 15:50 becomes "16:00")
-
-IMPORTANT RULES:
-- Create a SEPARATE entry for EACH day a class appears
-- Look at which COLUMN the class is in to determine the day
-- Look at which ROW the class starts in to determine start time
-- Course codes often look like "XXXX-####H" format (4 letters, dash, 4 numbers, H)
-- The colored/shaded cells indicate class times
-
-Return ONLY a valid JSON array, nothing else:
-[
-  {"name": "SOCI-2110H", "day": "Tuesday", "startTime": "09:00", "endTime": "12:00"},
-  {"name": "SOCI-2110H", "day": "Monday", "startTime": "09:00", "endTime": "12:00"}
-]
-
-If you cannot read clearly, return: []` }
-            ]
-          }]
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'API request failed');
-      }
-      
-      const data = await response.json();
-      const text = data.content?.map(item => item.text || "").join("") || "";
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        const classesWithIds = parsed.map((cls, idx) => ({
-          ...cls, 
-          id: Date.now() + idx,
-          startTime: String(parseInt(cls.startTime?.split(':')[0]) || 9),
-          endTime: String(parseInt(cls.endTime?.split(':')[0]) || 10)
-        }));
-        if (classesWithIds.length > 0) {
-          setClasses(prev => [...prev, ...classesWithIds]);
-        } else {
-          setClassParseError('No classes detected. Try adding manually.');
-        }
-      } else {
-        setClassParseError('Could not parse response. Please add classes manually.');
-      }
-    } catch (error) {
-      console.error('Parse error:', error);
-      setClassParseError(error.message || 'Could not parse schedule. Please add classes manually.');
-    } finally {
-      setParsingClasses(false);
-    }
-  };
-
-  const parseRLMWithAI = async (imageData) => {
-    if (!apiKey) {
-      setRlmParseError('Please add your Anthropic API key first (click the key icon)');
-      return;
-    }
-    
-    setParsingRLM(true);
-    setRlmParseError(null);
-    try {
-      const mediaType = imageData.includes('data:image/png') ? 'image/png' : 'image/jpeg';
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true"
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 2000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: mediaType, data: imageData.split(',')[1] } },
-              { type: "text", text: `Analyze this RLM/residence life calendar and extract all tasks, events, and deadlines.
-
-Look for:
-- Tasks with due dates (e.g., "Community Connection Conversations #1 Due")
-- Events spanning date ranges (shown by arrows or lines)
-- Friday Night Hangouts
-- Meetings
-- Move-in days, orientation events
-
-For each item found, extract:
-- Task/event name
-- Start date (YYYY-MM-DD format)
-- End date/due date (YYYY-MM-DD format)
-- Type: "deadline", "event", "meeting", or "hangout"
-
-Return ONLY a valid JSON array ordered by date:
-[
-  {"name": "Move In Day", "startDate": "2025-08-31", "endDate": "2025-08-31", "type": "event"},
-  {"name": "Community Connection Conversations #1 Due", "startDate": "2025-08-31", "endDate": "2025-09-08", "type": "deadline"}
-]
-
-If unclear, return: []` }
-            ]
-          }]
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'API request failed');
-      }
-      
-      const data = await response.json();
-      const text = data.content?.map(item => item.text || "").join("") || "";
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        setRlmTasks(parsed);
-        const connectionTask = parsed.find(t => t.name.toLowerCase().includes('community connection'));
-        if (connectionTask && !connectionDeadline) setConnectionDeadline(connectionTask.endDate);
-      }
-    } catch (error) {
-      setRlmParseError(error.message || 'Could not parse RLM. Use as reference.');
-    } finally {
-      setParsingRLM(false);
-    }
-  };
-
-  const processFile = async (file, type) => {
-    if (!file || !file.type.startsWith('image/')) return;
-    
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const imageData = e.target.result;
-      if (type === 'class') {
-        setClassImages(prev => [...prev, { data: imageData, name: file.name }]);
-        await parseClassScheduleWithAI(imageData);
-      } else if (type === 'rlm') {
-        setRlmImage(imageData);
-        await parseRLMWithAI(imageData);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleClassFileSelect = async (e) => {
+  const handleClassFileSelect = (e) => {
     const files = Array.from(e.target.files || []);
-    for (const file of files) {
-      await processFile(file, 'class');
-    }
+    files.forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => setClassImages(prev => [...prev, { data: e.target.result, name: file.name }]);
+        reader.readAsDataURL(file);
+      }
+    });
     if (classInputRef.current) classInputRef.current.value = '';
   };
 
-  const handleRLMFileSelect = async (e) => {
+  const handleRLMFileSelect = (e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      await processFile(file, 'rlm');
+    if (file?.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => setRlmImage(e.target.result);
+      reader.readAsDataURL(file);
     }
     if (rlmInputRef.current) rlmInputRef.current.value = '';
   };
 
   const handleClassDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingClass(true); };
   const handleClassDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingClass(false); };
-  const handleClassDrop = async (e) => {
+  const handleClassDrop = (e) => {
     e.preventDefault(); e.stopPropagation(); setIsDraggingClass(false);
-    const files = Array.from(e.dataTransfer.files);
-    for (const file of files) {
-      if (file.type.startsWith('image/')) await processFile(file, 'class');
-    }
+    Array.from(e.dataTransfer.files).forEach(file => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => setClassImages(prev => [...prev, { data: e.target.result, name: file.name }]);
+        reader.readAsDataURL(file);
+      }
+    });
   };
 
   const handleRLMDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingRLM(true); };
   const handleRLMDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingRLM(false); };
-  const handleRLMDrop = async (e) => {
+  const handleRLMDrop = (e) => {
     e.preventDefault(); e.stopPropagation(); setIsDraggingRLM(false);
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) await processFile(file, 'rlm');
+    if (file?.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => setRlmImage(e.target.result);
+      reader.readAsDataURL(file);
+    }
   };
 
   const addClass = () => {
     if (newClass.name && parseInt(newClass.startTime) < parseInt(newClass.endTime)) {
       setClasses([...classes, { ...newClass, id: Date.now() }]);
       setNewClass({ name: '', day: 'Monday', startTime: '9', endTime: '10' });
-      setIsAddingClass(false);
     }
   };
 
   const addMeeting = () => {
-    const meetingType = MEETING_TYPES.find(m => m.id === newMeeting.type);
-    const meeting = {
-      id: Date.now(),
-      day: newMeeting.day,
-      time: newMeeting.time,
-      date: newMeeting.date || null
-    };
-    setMeetings(prev => ({
-      ...prev,
-      [newMeeting.type]: [...prev[newMeeting.type], meeting]
-    }));
-    setNewMeeting({ type: 'team', day: 'Monday', time: '19:00', date: '' });
+    const meeting = { id: Date.now(), day: newMeeting.day, time: newMeeting.time };
+    setMeetings(prev => ({ ...prev, [newMeeting.type]: [...prev[newMeeting.type], meeting] }));
+    setNewMeeting({ type: 'team', day: 'Monday', time: '19:00' });
   };
 
   const removeMeeting = (type, id) => {
-    setMeetings(prev => ({
-      ...prev,
-      [type]: prev[type].filter(m => m.id !== id)
-    }));
+    setMeetings(prev => ({ ...prev, [type]: prev[type].filter(m => m.id !== id) }));
   };
 
   const calculateFNHHours = (start, end) => {
@@ -332,7 +134,6 @@ If unclear, return: []` }
     const schedule = {};
     DAYS.forEach(day => { schedule[day] = HOURS.map(hour => ({ hour, block: null })); });
 
-    // Add classes
     classes.forEach(cls => {
       const daySchedule = schedule[cls.day];
       if (daySchedule) {
@@ -343,7 +144,6 @@ If unclear, return: []` }
       }
     });
 
-    // Add DOD shifts
     dodShifts.forEach(day => {
       for (let h = 20; h <= 22; h++) {
         const slot = schedule[day]?.find(d => d.hour === h);
@@ -351,7 +151,6 @@ If unclear, return: []` }
       }
     });
 
-    // Add Friday hangouts
     fridayHangouts.forEach(fnh => {
       const startH = parseInt(fnh.startTime.split(':')[0]);
       const endH = parseInt(fnh.endTime.split(':')[0]);
@@ -361,19 +160,17 @@ If unclear, return: []` }
       }
     });
 
-    // Add all meetings
     Object.entries(meetings).forEach(([type, meetingList]) => {
       meetingList.forEach(meeting => {
         const hour = parseInt(meeting.time.split(':')[0]);
         const slot = schedule[meeting.day]?.find(d => d.hour === hour);
         const meetingInfo = MEETING_TYPES.find(m => m.id === type);
         if (slot && !slot.block) {
-          slot.block = { type: 'meeting', name: meetingInfo?.name.split(' ')[0] || 'Meeting', locked: true, meetingType: type };
+          slot.block = { type: 'meeting', name: meetingInfo?.name.split(' ')[0] || 'Meeting', locked: true };
         }
       });
     });
 
-    // Add meals
     [{ name: 'Breakfast', start: 8, end: 9 }, { name: 'Lunch', start: 12, end: 13 }, { name: 'Dinner', start: 18, end: 19 }].forEach(meal => {
       DAYS.forEach(day => {
         for (let h = meal.start; h < meal.end; h++) {
@@ -383,7 +180,6 @@ If unclear, return: []` }
       });
     });
 
-    // Add personal time
     DAYS.forEach(day => {
       let added = 0;
       for (let h = 14; h <= 22 && added < 3; h++) {
@@ -392,7 +188,6 @@ If unclear, return: []` }
       }
     });
 
-    // Add study time
     const studyPerDay = { Monday: 2, Tuesday: 2, Wednesday: 1, Thursday: 2, Friday: 1, Saturday: 1, Sunday: 1 };
     DAYS.forEach(day => {
       let added = 0;
@@ -402,7 +197,6 @@ If unclear, return: []` }
       }
     });
 
-    // Fill remaining with social
     DAYS.forEach(day => {
       for (let h = 14; h <= 22; h++) {
         const slot = schedule[day].find(d => d.hour === h);
@@ -465,7 +259,6 @@ If unclear, return: []` }
   const categoryHours = calculateCategoryHours();
   const connectionStats = calculateConnections();
   const totalFNHHours = fridayHangouts.reduce((sum, f) => sum + (f.hours || 0), 0);
-  const totalMeetings = Object.values(meetings).reduce((sum, arr) => sum + arr.length, 0);
 
   const getBlockStyle = (type) => ({
     class: { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white' },
@@ -481,7 +274,6 @@ If unclear, return: []` }
   const formatHour = (h) => h === 12 ? '12 PM' : h > 12 ? `${h - 12} PM` : `${h} AM`;
   const formatDate = (d) => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
   const formatTime = (t) => { if (!t) return ''; const [h, m] = t.split(':').map(Number); const hour = h % 12 || 12; return `${hour}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`; };
-  const getTaskColor = (type) => ({ deadline: '#ef4444', event: '#22c55e', meeting: '#14b8a6', hangout: '#ec4899' }[type] || '#667eea');
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg, #0f0c29 0%, #302b63 50%, #24243e 100%)', fontFamily: "'Nunito', sans-serif", color: '#e8e8e8', padding: 20 }}>
@@ -526,12 +318,6 @@ If unclear, return: []` }
         .legend-hours { opacity: 0.7; font-size: 10px; }
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
         .modal-content { background: rgba(48,43,99,0.95); border-radius: 20px; padding: 30px; max-width: 500px; width: 100%; }
-        .parsing-indicator { display: flex; align-items: center; gap: 12px; padding: 16px 20px; background: rgba(102,126,234,0.2); border: 1px solid rgba(102,126,234,0.4); border-radius: 12px; margin-bottom: 20px; }
-        .spinner { animation: spin 1s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .error-box { display: flex; align-items: center; gap: 10px; padding: 14px 18px; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; color: #ef4444; margin-bottom: 20px; }
-        .success-box { display: flex; align-items: center; gap: 10px; padding: 14px 18px; background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); border-radius: 12px; color: #22c55e; margin-bottom: 20px; }
-        .task-item { display: flex; align-items: center; gap: 12px; padding: 14px 18px; background: rgba(255,255,255,0.05); border-radius: 12px; border-left: 4px solid; margin-bottom: 10px; }
         h1 { font-family: 'Playfair Display', serif; font-size: 42px; text-align: center; margin-bottom: 10px; background: linear-gradient(135deg, #fff, #a8edea); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         h2 { font-size: 24px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
         .subtitle { text-align: center; opacity: 0.7; margin-bottom: 30px; font-size: 16px; }
@@ -553,22 +339,14 @@ If unclear, return: []` }
         .image-preview { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
         .image-preview img { width: 80px; height: 60px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 2px solid rgba(255,255,255,0.2); }
         .hidden-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
-        .api-key-btn { position: fixed; top: 20px; right: 20px; background: ${apiKey ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; border: 1px solid ${apiKey ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}; color: ${apiKey ? '#22c55e' : '#ef4444'}; padding: 10px 16px; border-radius: 10px; cursor: pointer; font-family: inherit; font-weight: 600; display: flex; align-items: center; gap: 8px; z-index: 100; }
         .meeting-type-card { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; margin-bottom: 15px; border-left: 4px solid; }
         .meeting-type-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .meeting-type-name { font-weight: 700; font-size: 16px; }
         .meeting-type-freq { font-size: 12px; opacity: 0.7; }
       `}</style>
 
-      {/* Hidden file inputs */}
       <input type="file" ref={classInputRef} className="hidden-input" accept="image/*" onChange={handleClassFileSelect} />
       <input type="file" ref={rlmInputRef} className="hidden-input" accept="image/*" onChange={handleRLMFileSelect} />
-
-      {/* API Key Button */}
-      <button className="api-key-btn" onClick={() => setShowApiKeyInput(true)}>
-        <Key size={16} />
-        {apiKey ? 'API Key Set' : 'Add API Key'}
-      </button>
 
       <h1>Don Schedule Manager</h1>
       <p className="subtitle">Balance classes, don duties & personal time</p>
@@ -584,50 +362,43 @@ If unclear, return: []` }
       {step === 1 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
           <h2><BookOpen size={24} /> Class Schedule</h2>
-          <p className="section-desc">Upload a screenshot of your timetable - AI will extract your classes</p>
-          {!apiKey && <div className="error-box"><Key size={18} />Add your Anthropic API key first (click button in top right)</div>}
-          {parsingClasses && <div className="parsing-indicator"><Loader size={20} className="spinner" /><span><strong>Analyzing schedule...</strong> This may take a few seconds</span></div>}
-          {classParseError && <div className="error-box"><AlertCircle size={18} />{classParseError}</div>}
-          {classes.length > 0 && !parsingClasses && <div className="success-box"><Sparkles size={18} /><strong>{classes.length} class blocks detected!</strong></div>}
+          <p className="section-desc">Add your classes manually, or upload a screenshot for reference</p>
           
           <div className={`upload-zone ${isDraggingClass ? 'dragging' : ''}`} onClick={() => classInputRef.current?.click()} onDragOver={handleClassDragOver} onDragEnter={handleClassDragOver} onDragLeave={handleClassDragLeave} onDrop={handleClassDrop} style={{ marginBottom: 20 }}>
             <Image size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
-            <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>Supports timetable grids, screenshots, etc.</div>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>Upload schedule image for reference</div>
+            <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>(Optional - add classes manually below)</div>
           </div>
           
           {classImages.length > 0 && <div className="image-preview">{classImages.map((img, idx) => <img key={idx} src={img.data} alt="Schedule" onClick={() => setShowImageModal(img.data)} />)}</div>}
           
-          <div className="form-row" style={{ marginTop: 15 }}>
-            {!isAddingClass && <button className="btn-secondary" onClick={() => setIsAddingClass(true)}><Plus size={18} /> Add Manually</button>}
-            {classes.length > 0 && <button className="btn-secondary" onClick={() => setClasses([])}><Trash2 size={18} /> Clear All</button>}
+          {/* Add Class Form */}
+          <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 20, marginTop: 20 }}>
+            <div style={{ fontWeight: 600, marginBottom: 15 }}>Add Class</div>
+            <div className="form-row">
+              <input className="input-field" placeholder="Class name (e.g., SOCI-2110H)" value={newClass.name} onChange={e => setNewClass({ ...newClass, name: e.target.value })} style={{ flex: 1 }} />
+              <select className="input-field" value={newClass.day} onChange={e => setNewClass({ ...newClass, day: e.target.value })} style={{ width: 'auto' }}>
+                {DAYS.map(d => <option key={d}>{d}</option>)}
+              </select>
+            </div>
+            <div className="form-row" style={{ marginBottom: 0 }}>
+              <select className="input-field" value={newClass.startTime} onChange={e => setNewClass({ ...newClass, startTime: e.target.value })} style={{ width: 'auto' }}>
+                {HOURS.slice(0,-1).map(h => <option key={h} value={h}>{formatHour(h)}</option>)}
+              </select>
+              <span>to</span>
+              <select className="input-field" value={newClass.endTime} onChange={e => setNewClass({ ...newClass, endTime: e.target.value })} style={{ width: 'auto' }}>
+                {HOURS.slice(1).map(h => <option key={h} value={h}>{formatHour(h)}</option>)}
+              </select>
+              <button className="btn-add" onClick={addClass} disabled={!newClass.name}><Plus size={18} /> Add</button>
+            </div>
           </div>
           
-          {isAddingClass && (
-            <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 20 }}>
-              <div className="form-row">
-                <input className="input-field" placeholder="Class name (e.g., SOCI-2110H)" value={newClass.name} onChange={e => setNewClass({ ...newClass, name: e.target.value })} style={{ flex: 1 }} />
-                <select className="input-field" value={newClass.day} onChange={e => setNewClass({ ...newClass, day: e.target.value })} style={{ width: 'auto' }}>
-                  {DAYS.map(d => <option key={d}>{d}</option>)}
-                </select>
-              </div>
-              <div className="form-row">
-                <select className="input-field" value={newClass.startTime} onChange={e => setNewClass({ ...newClass, startTime: e.target.value })} style={{ width: 'auto' }}>
-                  {HOURS.slice(0,-1).map(h => <option key={h} value={h}>{formatHour(h)}</option>)}
-                </select>
-                <span>to</span>
-                <select className="input-field" value={newClass.endTime} onChange={e => setNewClass({ ...newClass, endTime: e.target.value })} style={{ width: 'auto' }}>
-                  {HOURS.slice(1).map(h => <option key={h} value={h}>{formatHour(h)}</option>)}
-                </select>
-                <button className="btn-add" onClick={addClass}>Save</button>
-                <button className="btn-secondary" onClick={() => setIsAddingClass(false)}>Cancel</button>
-              </div>
-            </div>
-          )}
-          
           {classes.length > 0 && (
-            <div style={{ marginTop: 15 }}>
-              <div style={{ fontWeight: 600, marginBottom: 10 }}>Detected Classes:</div>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: 10, display: 'flex', justifyContent: 'space-between' }}>
+                <span>Your Classes ({classes.length})</span>
+                <button className="btn-secondary" style={{ padding: '6px 12px' }} onClick={() => setClasses([])}><Trash2 size={14} /> Clear</button>
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap' }}>
                 {classes.map(cls => (
                   <span key={cls.id} className="tag class">
@@ -645,34 +416,17 @@ If unclear, return: []` }
       {step === 2 && (
         <div className="glass-card" style={{ maxWidth: 900, margin: '0 auto' }}>
           <h2><Calendar size={24} /> RLM Calendar</h2>
-          <p className="section-desc">Upload RLM - AI extracts deadlines & date ranges</p>
-          {parsingRLM && <div className="parsing-indicator"><Loader size={20} className="spinner" /><span><strong>Analyzing RLM...</strong></span></div>}
-          {rlmParseError && <div className="error-box"><AlertCircle size={18} />{rlmParseError}</div>}
-          {rlmTasks.length > 0 && !parsingRLM && <div className="success-box"><Sparkles size={18} /><strong>{rlmTasks.length} tasks detected!</strong></div>}
+          <p className="section-desc">Upload your RLM calendar for reference while scheduling</p>
           {!rlmImage ? (
             <div className={`upload-zone ${isDraggingRLM ? 'dragging' : ''}`} onClick={() => rlmInputRef.current?.click()} onDragOver={handleRLMDragOver} onDragEnter={handleRLMDragOver} onDragLeave={handleRLMDragLeave} onDrop={handleRLMDrop} style={{ marginBottom: 20 }}>
               <Calendar size={40} style={{ opacity: 0.5, marginBottom: 12 }} />
-              <div style={{ fontSize: 16, fontWeight: 600 }}>Drag & drop or click to upload</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Upload RLM Calendar</div>
+              <div style={{ fontSize: 13, opacity: 0.6, marginTop: 5 }}>(Optional - for reference)</div>
             </div>
           ) : (
             <div style={{ marginBottom: 20 }}>
-              <img src={rlmImage} alt="RLM" style={{ maxWidth: '100%', maxHeight: 250, borderRadius: 12, cursor: 'pointer', display: 'block', margin: '0 auto 15px' }} onClick={() => setShowImageModal(rlmImage)} />
-              <div style={{ textAlign: 'center', marginBottom: 15 }}><button className="btn-secondary" onClick={() => { setRlmImage(null); setRlmTasks([]); }}><Trash2 size={16} /> Remove</button></div>
-              {rlmTasks.length > 0 && (
-                <div>
-                  <h3 style={{ fontSize: 16, marginBottom: 12 }}><Sparkles size={18} /> Extracted Deadlines</h3>
-                  {rlmTasks.map((task, idx) => (
-                    <div key={idx} className="task-item" style={{ borderLeftColor: getTaskColor(task.type) }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600 }}>{task.name}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>{formatDate(task.startDate)}{task.endDate !== task.startDate && ` → ${formatDate(task.endDate)}`}</div>
-                      </div>
-                      <span style={{ fontSize: 10, textTransform: 'uppercase', padding: '4px 8px', background: 'rgba(255,255,255,0.1)', borderRadius: 4 }}>{task.type}</span>
-                      <button onClick={() => setRlmTasks(rlmTasks.filter((_,i) => i !== idx))} style={{ background: 'rgba(239,68,68,0.2)', border: 'none', padding: 6, borderRadius: 6, color: '#ef4444', cursor: 'pointer' }}><X size={14} /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <img src={rlmImage} alt="RLM" style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 12, cursor: 'pointer', display: 'block', margin: '0 auto 15px' }} onClick={() => setShowImageModal(rlmImage)} />
+              <div style={{ textAlign: 'center' }}><button className="btn-secondary" onClick={() => setRlmImage(null)}><Trash2 size={16} /> Remove</button></div>
             </div>
           )}
           <div className="nav-buttons">
@@ -685,7 +439,7 @@ If unclear, return: []` }
       {step === 3 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
           <h2><Clock size={24} /> Don on Duty</h2>
-          <p className="section-desc">Select DOD days (8-10 PM)</p>
+          <p className="section-desc">Select your DOD days (8-10 PM)</p>
           <div className="form-row">
             <select className="input-field" value={newDodDay} onChange={e => setNewDodDay(e.target.value)} style={{ width: 'auto' }}>
               {DAYS.filter(d => !dodShifts.includes(d)).map(d => <option key={d}>{d}</option>)}
@@ -703,7 +457,7 @@ If unclear, return: []` }
       {step === 4 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
           <h2><PartyPopper size={24} /> Friday Night Hangouts</h2>
-          <p className="section-desc">Add shifts with start/end times</p>
+          <p className="section-desc">Add your FNH shifts with start/end times</p>
           <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 20 }}>
             <div className="form-row">
               <div style={{ flex: 1 }}><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Date</label><input type="date" className="input-field" value={newFNH.date} onChange={e => setNewFNH({ ...newFNH, date: e.target.value })} /></div>
@@ -733,9 +487,8 @@ If unclear, return: []` }
           <h2><UserCheck size={24} /> Meetings</h2>
           <p className="section-desc">Add your recurring meetings</p>
           
-          {/* Add Meeting Form */}
           <div style={{ padding: 20, background: 'rgba(255,255,255,0.05)', borderRadius: 14, marginBottom: 25 }}>
-            <div className="form-row">
+            <div className="form-row" style={{ marginBottom: 0 }}>
               <select className="input-field" value={newMeeting.type} onChange={e => setNewMeeting({ ...newMeeting, type: e.target.value })} style={{ flex: 1 }}>
                 {MEETING_TYPES.map(m => <option key={m.id} value={m.id}>{m.name} ({m.frequency})</option>)}
               </select>
@@ -747,7 +500,6 @@ If unclear, return: []` }
             </div>
           </div>
 
-          {/* Meeting Types */}
           {MEETING_TYPES.map(meetingType => (
             <div key={meetingType.id} className="meeting-type-card" style={{ borderLeftColor: meetingType.color }}>
               <div className="meeting-type-header">
@@ -780,10 +532,11 @@ If unclear, return: []` }
       {step === 6 && (
         <div className="glass-card" style={{ maxWidth: 800, margin: '0 auto' }}>
           <h2><Users size={24} /> Community Connections</h2>
+          <p className="section-desc">Track your community connection progress</p>
           <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 25 }}>
             <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Community Size</label><input className="input-field" type="number" placeholder="# residents" value={communitySize} onChange={e => setCommunitySize(e.target.value)} /></div>
             <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Completed</label><input className="input-field" type="number" placeholder="Done" value={completedConnections} onChange={e => setCompletedConnections(e.target.value)} /></div>
-            <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Deadline {connectionDeadline && <span style={{ opacity: 0.6 }}>(from RLM)</span>}</label><input className="input-field" type="date" value={connectionDeadline} onChange={e => setConnectionDeadline(e.target.value)} /></div>
+            <div><label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Deadline</label><input className="input-field" type="date" value={connectionDeadline} onChange={e => setConnectionDeadline(e.target.value)} /></div>
           </div>
           {communitySize && connectionDeadline && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 12, marginBottom: 20 }}>
@@ -795,7 +548,7 @@ If unclear, return: []` }
           )}
           <div className="nav-buttons">
             <button className="btn-secondary" onClick={() => setStep(5)}><ChevronLeft size={20} /> Back</button>
-            <button className="btn-primary" onClick={generateSchedule}>Generate <ChevronRight size={20} /></button>
+            <button className="btn-primary" onClick={generateSchedule}>Generate Schedule <ChevronRight size={20} /></button>
           </div>
         </div>
       )}
@@ -868,19 +621,6 @@ If unclear, return: []` }
           <div className="nav-buttons">
             <button className="btn-secondary" onClick={() => setStep(6)}><ChevronLeft size={20} /> Edit</button>
             <button className="btn-secondary" onClick={() => { setStep(1); setGeneratedSchedule(null); }}>Start Over</button>
-          </div>
-        </div>
-      )}
-
-      {/* API Key Modal */}
-      {showApiKeyInput && (
-        <div className="modal-overlay" onClick={() => setShowApiKeyInput(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}><Key size={20} /> Anthropic API Key</h3>
-            <p style={{ opacity: 0.7, marginBottom: 20, fontSize: 14 }}>Required for AI schedule parsing. Get one free at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: '#667eea' }}>console.anthropic.com</a></p>
-            <input className="input-field" type="password" placeholder="sk-ant-..." value={apiKey} onChange={e => saveApiKey(e.target.value)} style={{ marginBottom: 15 }} />
-            {apiKey && <div className="success-box"><Sparkles size={18} />API key saved! It's stored locally in your browser.</div>}
-            <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowApiKeyInput(false)}>Done</button>
           </div>
         </div>
       )}
